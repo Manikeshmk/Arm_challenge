@@ -4,229 +4,329 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Arm Edge S2S Translation</title>
+    <title>Arm Edge · On-Device Speech Translator</title>
+    <meta name="description"
+        content="100% local, offline speech-to-speech translator powered by WebAssembly SIMD on Arm CPUs.">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        * {
+        *,
+        *::before,
+        *::after {
             box-sizing: border-box;
             margin: 0;
             padding: 0;
         }
 
+        :root {
+            --cyan: #00d4ff;
+            --purple: #a78bfa;
+            --green: #22c55e;
+            --yellow: #fbbf24;
+            --red: #f43f5e;
+            --bg: #080b12;
+            --surface: #0f1420;
+            --card: #141926;
+            --border: rgba(255, 255, 255, 0.07);
+            --muted: #64748b;
+        }
+
         body {
             font-family: 'Inter', sans-serif;
-            background: linear-gradient(135deg, #0a0a0f 0%, #121220 50%, #0a0f1a 100%);
-            color: #ffffff;
+            background: var(--bg);
+            color: #e2e8f0;
             min-height: 100vh;
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
-            padding: 1rem;
+            justify-content: flex-start;
+            padding: 1.2rem 1rem 2rem;
         }
 
-        .container {
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            backdrop-filter: blur(20px);
-            padding: 2rem;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 212, 255, 0.05);
-            width: 92%;
-            max-width: 520px;
-            text-align: center;
+        /* ── Header ── */
+        .header {
+            width: 100%;
+            max-width: 540px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+            padding: 0 2px;
         }
 
-        .logo-badge {
-            display: inline-flex;
+        .brand {
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            color: var(--cyan);
+            display: flex;
             align-items: center;
             gap: 6px;
-            background: rgba(0, 212, 255, 0.12);
-            border: 1px solid rgba(0, 212, 255, 0.3);
-            border-radius: 30px;
-            padding: 4px 12px;
-            font-size: 0.72rem;
-            color: #00d4ff;
-            font-weight: 600;
-            letter-spacing: 0.5px;
-            text-transform: uppercase;
-            margin-bottom: 1rem;
         }
 
-        .dot {
-            width: 7px;
-            height: 7px;
+        .brand-dot {
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
-            background: #00d4ff;
-            animation: blink 2s ease-in-out infinite;
+            background: var(--cyan);
+            animation: pulse-dot 2s ease-in-out infinite;
         }
 
-        @keyframes blink {
+        @keyframes pulse-dot {
 
             0%,
             100% {
                 opacity: 1;
+                box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.5);
             }
 
             50% {
-                opacity: 0.2;
+                opacity: .4;
+                box-shadow: 0 0 0 6px rgba(0, 212, 255, 0);
             }
         }
 
-        h1 {
-            font-size: 1.45rem;
-            font-weight: 700;
-            margin-bottom: 0.3rem;
-            background: linear-gradient(135deg, #00d4ff, #a78bfa);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        p.subtitle {
-            font-size: 0.82rem;
-            color: #7a8399;
-            margin-bottom: 1.6rem;
-            line-height: 1.5;
-        }
-
-        /* === Loading Panel === */
-        #loadingPanel {
-            background: rgba(0, 0, 0, 0.35);
-            border: 1px solid rgba(255, 255, 255, 0.07);
-            border-radius: 14px;
-            padding: 1.4rem 1.2rem;
-            margin-bottom: 1.4rem;
-        }
-
-        .load-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 0.6rem;
-        }
-
-        .load-title {
-            font-size: 0.8rem;
+        .offline-chip {
+            font-size: 0.68rem;
             font-weight: 600;
-            color: #aab0c0;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        #loadPct {
-            font-size: 0.9rem;
-            font-weight: 700;
-            color: #00d4ff;
-            min-width: 38px;
-            text-align: right;
-        }
-
-        .progress-track {
-            background: rgba(255, 255, 255, 0.07);
+            color: var(--green);
+            background: rgba(34, 197, 94, 0.1);
+            border: 1px solid rgba(34, 197, 94, 0.25);
             border-radius: 99px;
-            height: 8px;
-            overflow: hidden;
+            padding: 3px 10px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        /* ── Card ── */
+        .card {
+            width: 100%;
+            max-width: 540px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 1.6rem;
             margin-bottom: 0.8rem;
         }
 
-        #progressBar {
-            height: 100%;
-            width: 0%;
+        .card-title {
+            font-size: 0.65rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: var(--muted);
+            margin-bottom: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+        }
+
+        .card-title::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--border);
+        }
+
+        /* ── Error Banner ── */
+        #errorBanner {
+            display: none;
+            width: 100%;
+            max-width: 540px;
+            background: rgba(244, 63, 94, 0.12);
+            border: 1px solid rgba(244, 63, 94, 0.4);
+            border-radius: 14px;
+            padding: 0.9rem 1rem 0.9rem 1.1rem;
+            margin-bottom: 0.8rem;
+            color: #fca5a5;
+            font-size: 0.84rem;
+            line-height: 1.5;
+        }
+
+        #errorBanner .err-head {
+            font-weight: 700;
+            font-size: 0.82rem;
+            color: var(--red);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 4px;
+        }
+
+        #errorBanner .err-close {
+            float: right;
+            cursor: pointer;
+            font-size: 1rem;
+            opacity: 0.6;
+            background: none;
+            border: none;
+            color: #fca5a5;
+            line-height: 1;
+        }
+
+        #errorBanner .err-close:hover {
+            opacity: 1;
+        }
+
+        /* ── Model Loading Card ── */
+        .overall-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+
+        .overall-label {
+            font-size: 0.8rem;
+            color: #94a3b8;
+        }
+
+        #overallPct {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: var(--cyan);
+            min-width: 40px;
+            text-align: right;
+        }
+
+        /* shared progress bar track */
+        .pbar-track {
+            background: rgba(255, 255, 255, 0.06);
             border-radius: 99px;
-            background: linear-gradient(90deg, #00d4ff, #a78bfa);
-            transition: width 0.5s ease;
+            height: 7px;
+            overflow: hidden;
+            margin-bottom: 0.85rem;
+        }
+
+        .pbar-fill {
+            height: 100%;
+            border-radius: 99px;
+            background: linear-gradient(90deg, var(--cyan), var(--purple));
+            transition: width 0.4s ease;
             position: relative;
         }
 
-        #progressBar::after {
+        .pbar-fill.indeterminate {
+            width: 40% !important;
+            animation: indeterminate 1.4s ease-in-out infinite;
+        }
+
+        @keyframes indeterminate {
+            0% {
+                transform: translateX(-100%);
+            }
+
+            100% {
+                transform: translateX(350%);
+            }
+        }
+
+        .pbar-fill::after {
             content: '';
             position: absolute;
             top: 0;
             right: 0;
-            width: 30px;
+            width: 40px;
             height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4));
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35));
             border-radius: 99px;
-            animation: shimmer 1.5s infinite;
         }
 
-        @keyframes shimmer {
-            0% {
-                opacity: 0;
-            }
-
-            50% {
-                opacity: 1;
-            }
-
-            100% {
-                opacity: 0;
-            }
+        /* model rows */
+        .model-row {
+            padding: 8px 10px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid transparent;
+            margin-bottom: 6px;
+            transition: background 0.3s, border-color 0.3s;
         }
 
-        .steps-grid {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            margin-top: 4px;
+        .model-row.active {
+            background: rgba(0, 212, 255, 0.06);
+            border-color: rgba(0, 212, 255, 0.2);
         }
 
-        .step-row {
+        .model-row.done {
+            background: rgba(34, 197, 94, 0.06);
+            border-color: rgba(34, 197, 94, 0.2);
+        }
+
+        .model-top {
             display: flex;
             align-items: center;
             gap: 8px;
-            padding: 6px 8px;
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.02);
-            transition: background 0.3s;
+            margin-bottom: 5px;
         }
 
-        .step-row.active {
-            background: rgba(0, 212, 255, 0.08);
-            border: 1px solid rgba(0, 212, 255, 0.2);
-        }
-
-        .step-row.done {
-            background: rgba(40, 167, 69, 0.08);
-            border: 1px solid rgba(40, 167, 69, 0.2);
-        }
-
-        .step-icon {
+        .model-icon {
             font-size: 0.95rem;
-            width: 20px;
+            width: 22px;
             text-align: center;
             flex-shrink: 0;
         }
 
-        .step-label {
-            font-size: 0.78rem;
-            color: #7a8399;
+        .model-name {
+            font-size: 0.8rem;
             flex: 1;
-            text-align: left;
+            color: #94a3b8;
         }
 
-        .step-row.active .step-label {
-            color: #00d4ff;
+        .model-row.active .model-name {
+            color: var(--cyan);
         }
 
-        .step-row.done .step-label {
-            color: #28a745;
+        .model-row.done .model-name {
+            color: var(--green);
         }
 
-        .step-size {
-            font-size: 0.7rem;
-            color: #555;
-            margin-left: auto;
+        .model-size {
+            font-size: 0.68rem;
+            color: #3d4f63;
         }
 
-        .step-spin {
-            width: 14px;
-            height: 14px;
-            border: 2px solid rgba(0, 212, 255, 0.3);
-            border-top-color: #00d4ff;
+        .model-pct {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--cyan);
+            min-width: 34px;
+            text-align: right;
+        }
+
+        .model-row.done .model-pct {
+            color: var(--green);
+        }
+
+        .model-mini-bar {
+            margin: 0 2px;
+        }
+
+        .model-mini-bar .pbar-track {
+            height: 4px;
+            margin-bottom: 0;
+        }
+
+        .model-file {
+            font-size: 0.67rem;
+            color: #3d4f63;
+            margin-top: 3px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .model-row.active .model-file {
+            color: #4a6080;
+        }
+
+        .spinner {
+            width: 13px;
+            height: 13px;
+            border: 2px solid rgba(0, 212, 255, 0.25);
+            border-top-color: var(--cyan);
             border-radius: 50%;
-            animation: spin 0.8s linear infinite;
+            animation: spin 0.7s linear infinite;
             flex-shrink: 0;
         }
 
@@ -236,220 +336,600 @@
             }
         }
 
-        .step-check {
-            color: #28a745;
+        .check-icon {
+            color: var(--green);
             font-size: 0.85rem;
             flex-shrink: 0;
         }
 
-        .step-dot {
+        .idle-dot {
             width: 6px;
             height: 6px;
-            background: rgba(255, 255, 255, 0.15);
+            background: rgba(255, 255, 255, 0.12);
             border-radius: 50%;
             flex-shrink: 0;
         }
 
-        .eta-text {
-            font-size: 0.73rem;
-            color: #556;
-            margin-top: 8px;
+        #loadEta {
+            font-size: 0.72rem;
+            color: #3d4f63;
+            margin-top: 4px;
             font-style: italic;
+            text-align: center;
         }
 
-        /* === Status Box (post-load) === */
-        #statusBox {
-            background: rgba(0, 0, 0, 0.3);
-            border: 1px solid rgba(255, 255, 255, 0.07);
-            border-radius: 12px;
-            padding: 0.9rem 1rem;
-            margin-bottom: 1.4rem;
-            font-size: 0.88rem;
-            color: #aab0c0;
-            min-height: 52px;
+        /* ── Pipeline Steps Card ── */
+        #pipelineCard {
+            display: none;
+        }
+
+        .pipeline-steps {
             display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .p-step {
+            display: grid;
+            grid-template-columns: 26px 1fr auto;
+            grid-template-rows: auto auto;
+            gap: 0 8px;
+            padding: 9px 10px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid transparent;
             transition: all 0.3s;
         }
 
-        #statusBox.ready {
-            border-color: rgba(40, 167, 69, 0.4);
-            background: rgba(40, 167, 69, 0.08);
-            color: #5cb85c;
+        .p-step.active {
+            background: rgba(251, 191, 36, 0.06);
+            border-color: rgba(251, 191, 36, 0.25);
         }
 
-        #statusBox.busy {
-            border-color: rgba(255, 193, 7, 0.4);
-            background: rgba(255, 193, 7, 0.06);
-            color: #ffc107;
+        .p-step.done {
+            background: rgba(34, 197, 94, 0.05);
+            border-color: rgba(34, 197, 94, 0.2);
         }
 
-        #statusBox.error {
-            border-color: rgba(220, 53, 69, 0.4);
-            background: rgba(220, 53, 69, 0.06);
-            color: #dc3545;
+        .p-step.error {
+            background: rgba(244, 63, 94, 0.06);
+            border-color: rgba(244, 63, 94, 0.25);
         }
 
-        /* === Button === */
+        .p-step-num {
+            grid-row: 1;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            border: 1.5px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.65rem;
+            font-weight: 700;
+            color: var(--muted);
+            flex-shrink: 0;
+            transition: all 0.3s;
+        }
+
+        .p-step.active .p-step-num {
+            border-color: var(--yellow);
+            color: var(--yellow);
+        }
+
+        .p-step.done .p-step-num {
+            border-color: var(--green);
+            color: var(--green);
+            background: rgba(34, 197, 94, 0.12);
+        }
+
+        .p-step.error .p-step-num {
+            border-color: var(--red);
+            color: var(--red);
+        }
+
+        .p-step-body {
+            grid-column: 2;
+            grid-row: 1;
+            min-width: 0;
+        }
+
+        .p-step-label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #64748b;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .p-step.active .p-step-label {
+            color: var(--yellow);
+        }
+
+        .p-step.done .p-step-label {
+            color: var(--green);
+        }
+
+        .p-step.error .p-step-label {
+            color: var(--red);
+        }
+
+        .p-step-desc {
+            font-size: 0.7rem;
+            color: #3d4f63;
+            margin-top: 2px;
+        }
+
+        .p-step.active .p-step-desc {
+            color: #5a7090;
+        }
+
+        .p-step.done .p-step-desc {
+            color: #2d6a40;
+        }
+
+        .p-step-right {
+            grid-column: 3;
+            grid-row: 1;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .p-step-timer {
+            font-size: 0.68rem;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            color: var(--muted);
+        }
+
+        .p-step.active .p-step-timer {
+            color: var(--yellow);
+        }
+
+        .p-step.done .p-step-timer {
+            color: #2d6a40;
+        }
+
+        /* mini-bar inside step */
+        .p-step-bar-wrap {
+            grid-column: 2 / 4;
+            grid-row: 2;
+            margin-top: 5px;
+        }
+
+        .p-step-bar-wrap .pbar-track {
+            height: 3px;
+            margin-bottom: 0;
+        }
+
+        /* ── Mic Level Meter ── */
+        #micMeter {
+            display: none;
+            width: 100%;
+            max-width: 540px;
+            background: var(--card);
+            border: 1px solid rgba(244, 63, 94, 0.25);
+            border-radius: 14px;
+            padding: 0.8rem 1.1rem;
+            margin-bottom: 0.8rem;
+        }
+
+        .mic-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+
+        .mic-label {
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: #f43f5e;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .mic-rec-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #f43f5e;
+            animation: blink-rec 1s step-end infinite;
+        }
+
+        @keyframes blink-rec {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0;
+            }
+        }
+
+        .mic-dur {
+            font-size: 0.7rem;
+            font-variant-numeric: tabular-nums;
+            color: var(--muted);
+        }
+
+        .level-bars {
+            display: flex;
+            align-items: flex-end;
+            gap: 3px;
+            height: 28px;
+        }
+
+        .level-bar {
+            flex: 1;
+            border-radius: 3px;
+            background: rgba(244, 63, 94, 0.2);
+            transition: height 0.08s ease;
+            min-height: 3px;
+        }
+
+        /* ── Record Button ── */
         #recordBtn {
-            background: linear-gradient(135deg, #00d4ff, #0099cc);
-            color: #000;
+            width: 100%;
+            max-width: 540px;
             border: none;
-            padding: 1rem 2rem;
+            padding: 1.05rem 1.5rem;
             font-size: 1rem;
             font-weight: 700;
             border-radius: 50px;
             cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-            width: 100%;
             letter-spacing: 0.3px;
-            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3);
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 0.8rem;
         }
 
-        #recordBtn:hover:not(:disabled) {
-            transform: scale(1.03);
-            box-shadow: 0 6px 28px rgba(0, 212, 255, 0.45);
-        }
-
-        #recordBtn:disabled {
-            background: linear-gradient(135deg, #2a2a35, #1e1e28);
-            color: #4a4a5a;
+        #recordBtn.state-loading {
+            background: rgba(255, 255, 255, 0.05);
+            color: #3d4f63;
             cursor: not-allowed;
             box-shadow: none;
-            transform: none;
         }
 
-        .pulse {
-            animation: pulse 1.5s infinite !important;
-            background: linear-gradient(135deg, #ff3366, #cc0033) !important;
-            color: #fff !important;
-            box-shadow: 0 6px 28px rgba(255, 51, 102, 0.45) !important;
+        #recordBtn.state-ready {
+            background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
+            color: #000;
+            box-shadow: 0 4px 24px rgba(0, 212, 255, 0.35);
         }
 
-        @keyframes pulse {
-            0% {
+        #recordBtn.state-ready:hover {
+            transform: scale(1.02);
+            box-shadow: 0 6px 32px rgba(0, 212, 255, 0.5);
+        }
+
+        #recordBtn.state-recording {
+            background: linear-gradient(135deg, #f43f5e 0%, #be123c 100%);
+            color: #fff;
+            box-shadow: 0 4px 24px rgba(244, 63, 94, 0.45);
+            animation: btn-pulse 1.2s ease-in-out infinite;
+        }
+
+        @keyframes btn-pulse {
+
+            0%,
+            100% {
                 transform: scale(1);
             }
 
             50% {
-                transform: scale(1.04);
-            }
-
-            100% {
-                transform: scale(1);
+                transform: scale(1.03);
             }
         }
 
-        /* === Output === */
-        .output-section {
-            margin-top: 1.2rem;
-            text-align: left;
+        #recordBtn.state-processing {
+            background: rgba(251, 191, 36, 0.1);
+            color: var(--yellow);
+            border: 1px solid rgba(251, 191, 36, 0.3);
+            cursor: not-allowed;
         }
 
-        .output-label {
-            font-size: 0.7rem;
-            color: #00d4ff;
+        #recordBtn:disabled {
+            cursor: not-allowed;
+        }
+
+        /* ── Output Card ── */
+        .out-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.8rem;
+        }
+
+        @media (max-width: 420px) {
+            .out-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .out-box {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 0.7rem 0.8rem;
+            min-height: 60px;
+            transition: border-color 0.3s;
+        }
+
+        .out-box.has-content {
+            border-color: rgba(255, 255, 255, 0.12);
+        }
+
+        .out-lang {
+            font-size: 0.62rem;
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 1px;
-            margin-bottom: 0.35rem;
-            display: block;
+            color: var(--muted);
+            margin-bottom: 5px;
         }
 
-        .output-text {
-            font-size: 0.92rem;
-            color: #aab0c0;
-            word-wrap: break-word;
+        .out-text {
+            font-size: 0.88rem;
+            color: #3d4f63;
             line-height: 1.55;
-            padding: 0.6rem 0.8rem;
-            background: rgba(255, 255, 255, 0.03);
-            border-radius: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            min-height: 36px;
+            word-break: break-word;
         }
 
-        hr.divider {
-            border: 0;
-            border-top: 1px solid rgba(255, 255, 255, 0.07);
-            margin: 1.2rem 0;
+        .out-text.filled {
+            color: #e2e8f0;
         }
 
-        .offline-badge {
-            margin-top: 1.3rem;
+        .out-text.processing {
+            color: var(--yellow);
+        }
+
+        /* ── Footer ── */
+        .footer {
+            width: 100%;
+            max-width: 540px;
             display: flex;
-            align-items: center;
-            justify-content: center;
+            flex-wrap: wrap;
             gap: 6px;
-            font-size: 0.72rem;
-            color: #3a8a4a;
-            background: rgba(40, 167, 69, 0.06);
-            border: 1px solid rgba(40, 167, 69, 0.18);
-            border-radius: 30px;
-            padding: 5px 12px;
+            justify-content: center;
+            margin-top: 0.4rem;
+        }
+
+        .chip {
+            font-size: 0.67rem;
+            font-weight: 500;
+            color: #3d4f63;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 99px;
+            padding: 3px 9px;
         }
     </style>
 </head>
 
 <body>
-    <div class="container">
-        <div class="logo-badge"><span class="dot"></span> Arm Edge AI</div>
-        <h1>On-Device Speech Translator</h1>
-        <p class="subtitle">100% local · WebAssembly SIMD/NEON · Works offline after first load</p>
 
-        <!-- Loading Panel (shown while models download) -->
-        <div id="loadingPanel">
-            <div class="load-header">
-                <span class="load-title">⬇&nbsp; Loading AI Engine</span>
-                <span id="loadPct">0%</span>
+    <!-- Header -->
+    <div class="header">
+        <div class="brand"><span class="brand-dot"></span> Arm Edge AI</div>
+        <div class="offline-chip">🔒 100% On-Device</div>
+    </div>
+
+    <!-- Error Banner -->
+    <div id="errorBanner">
+        <button class="err-close" onclick="document.getElementById('errorBanner').style.display='none'">✕</button>
+        <div class="err-head">⚠️ Error</div>
+        <div id="errorMsg">Something went wrong.</div>
+    </div>
+
+    <!-- Model Loading Card -->
+    <div class="card" id="loadingCard">
+        <div class="card-title">⬇ AI Engine Initialising</div>
+
+        <div class="overall-row">
+            <span class="overall-label">Overall progress</span>
+            <span id="overallPct">0%</span>
+        </div>
+        <div class="pbar-track">
+            <div class="pbar-fill" id="overallBar" style="width:0%"></div>
+        </div>
+
+        <!-- Whisper -->
+        <div class="model-row" id="mrow-whisper">
+            <div class="model-top">
+                <div class="model-icon">🎙</div>
+                <div class="model-name">Whisper Tiny — Speech Recognition</div>
+                <div class="model-size">~40 MB</div>
+                <div class="model-pct" id="mpct-whisper">0%</div>
+                <div class="idle-dot" id="minds-whisper"></div>
             </div>
-            <div class="progress-track">
-                <div id="progressBar"></div>
-            </div>
-            <div class="steps-grid">
-                <div class="step-row" id="step-whisper">
-                    <span class="step-icon">🎙️</span>
-                    <span class="step-label">Whisper STT (speech recognition)</span>
-                    <span class="step-size">~40 MB</span>
-                    <span class="step-dot"></span>
-                </div>
-                <div class="step-row" id="step-marian">
-                    <span class="step-icon">🌐</span>
-                    <span class="step-label">MarianMT (EN→ES translation)</span>
-                    <span class="step-size">~75 MB</span>
-                    <span class="step-dot"></span>
-                </div>
-                <div class="step-row" id="step-tts">
-                    <span class="step-icon">🔊</span>
-                    <span class="step-label">SpeechT5 TTS (voice synthesis)</span>
-                    <span class="step-size">~150 MB</span>
-                    <span class="step-dot"></span>
+            <div class="model-mini-bar">
+                <div class="pbar-track">
+                    <div class="pbar-fill" id="mbar-whisper" style="width:0%"></div>
                 </div>
             </div>
-            <div class="eta-text" id="etaText">Starting download from CDN… This only happens once.</div>
+            <div class="model-file" id="mfile-whisper">Waiting…</div>
         </div>
 
-        <!-- Live status box (shown after loading) -->
-        <div id="statusBox" style="display:none;">Initializing…</div>
-
-        <button id="recordBtn" disabled>Loading AI Engine…</button>
-
-        <div class="output-section">
-            <span class="output-label">Transcription</span>
-            <div class="output-text" id="transcriptText" style="color:#3a3a4a;">Waiting for speech…</div>
+        <!-- MarianMT -->
+        <div class="model-row" id="mrow-marian">
+            <div class="model-top">
+                <div class="model-icon">🌐</div>
+                <div class="model-name">MarianMT — EN→ES Translation</div>
+                <div class="model-size">~75 MB</div>
+                <div class="model-pct" id="mpct-marian">0%</div>
+                <div class="idle-dot" id="minds-marian"></div>
+            </div>
+            <div class="model-mini-bar">
+                <div class="pbar-track">
+                    <div class="pbar-fill" id="mbar-marian" style="width:0%"></div>
+                </div>
+            </div>
+            <div class="model-file" id="mfile-marian">Waiting…</div>
         </div>
 
-        <hr class="divider">
-
-        <div class="output-section">
-            <span class="output-label">Translation (Spanish)</span>
-            <div class="output-text" id="translationText" style="color:#3a3a4a;">Waiting for pipeline…</div>
+        <!-- SpeechT5 -->
+        <div class="model-row" id="mrow-tts">
+            <div class="model-top">
+                <div class="model-icon">🔊</div>
+                <div class="model-name">SpeechT5 — Voice Synthesis</div>
+                <div class="model-size">~150 MB</div>
+                <div class="model-pct" id="mpct-tts">0%</div>
+                <div class="idle-dot" id="minds-tts"></div>
+            </div>
+            <div class="model-mini-bar">
+                <div class="pbar-track">
+                    <div class="pbar-fill" id="mbar-tts" style="width:0%"></div>
+                </div>
+            </div>
+            <div class="model-file" id="mfile-tts">Waiting…</div>
         </div>
 
-        <div class="offline-badge">
-            🔒 Runs 100% on-device · Offline after first load · No data leaves your device
+        <div id="loadEta">Starting… first load downloads ~265 MB of AI weights (cached forever after).</div>
+    </div>
+
+    <!-- Pipeline Steps Card (shown during/after inference) -->
+    <div class="card" id="pipelineCard">
+        <div class="card-title">⚙ Pipeline Progress</div>
+        <div class="pipeline-steps">
+
+            <!-- Step 1: Audio Capture -->
+            <div class="p-step" id="ps-capture">
+                <div class="p-step-num">1</div>
+                <div class="p-step-body">
+                    <div class="p-step-label">🎙 Audio Capture</div>
+                    <div class="p-step-desc">Recording raw PCM from microphone at 16 kHz</div>
+                </div>
+                <div class="p-step-right">
+                    <span class="p-step-timer" id="pt-capture">—</span>
+                    <div class="idle-dot" id="pi-capture"></div>
+                </div>
+                <div class="p-step-bar-wrap">
+                    <div class="pbar-track">
+                        <div class="pbar-fill" id="pb-capture" style="width:0%"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 2: Whisper STT -->
+            <div class="p-step" id="ps-stt">
+                <div class="p-step-num">2</div>
+                <div class="p-step-body">
+                    <div class="p-step-label">🧠 Whisper STT</div>
+                    <div class="p-step-desc">Running speech recognition on Arm CPU WASM</div>
+                </div>
+                <div class="p-step-right">
+                    <span class="p-step-timer" id="pt-stt">—</span>
+                    <div class="idle-dot" id="pi-stt"></div>
+                </div>
+                <div class="p-step-bar-wrap">
+                    <div class="pbar-track">
+                        <div class="pbar-fill indeterminate" id="pb-stt" style="display:none"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 3: Translation -->
+            <div class="p-step" id="ps-translate">
+                <div class="p-step-num">3</div>
+                <div class="p-step-body">
+                    <div class="p-step-label">🌐 MarianMT Translation</div>
+                    <div class="p-step-desc">Neural machine translation EN → ES</div>
+                </div>
+                <div class="p-step-right">
+                    <span class="p-step-timer" id="pt-translate">—</span>
+                    <div class="idle-dot" id="pi-translate"></div>
+                </div>
+                <div class="p-step-bar-wrap">
+                    <div class="pbar-track">
+                        <div class="pbar-fill indeterminate" id="pb-translate" style="display:none"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 4: TTS Synthesis -->
+            <div class="p-step" id="ps-tts">
+                <div class="p-step-num">4</div>
+                <div class="p-step-body">
+                    <div class="p-step-label">🔊 SpeechT5 TTS</div>
+                    <div class="p-step-desc">Generating waveform via HiFiGAN vocoder</div>
+                </div>
+                <div class="p-step-right">
+                    <span class="p-step-timer" id="pt-tts">—</span>
+                    <div class="idle-dot" id="pi-tts"></div>
+                </div>
+                <div class="p-step-bar-wrap">
+                    <div class="pbar-track">
+                        <div class="pbar-fill indeterminate" id="pb-tts" style="display:none"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 5: Audio Playback -->
+            <div class="p-step" id="ps-play">
+                <div class="p-step-num">5</div>
+                <div class="p-step-body">
+                    <div class="p-step-label">🎵 Audio Output</div>
+                    <div class="p-step-desc">Streaming synthesised audio to speaker</div>
+                </div>
+                <div class="p-step-right">
+                    <span class="p-step-timer" id="pt-play">—</span>
+                    <div class="idle-dot" id="pi-play"></div>
+                </div>
+                <div class="p-step-bar-wrap">
+                    <div class="pbar-track">
+                        <div class="pbar-fill indeterminate" id="pb-play" style="display:none"></div>
+                    </div>
+                </div>
+            </div>
+
         </div>
+    </div>
+
+    <!-- Mic Level Meter -->
+    <div id="micMeter">
+        <div class="mic-header">
+            <div class="mic-label">
+                <div class="mic-rec-dot"></div> Recording
+            </div>
+            <span class="mic-dur" id="micDur">0.0s</span>
+        </div>
+        <div class="level-bars" id="levelBars">
+            <!-- 20 bars inserted by JS -->
+        </div>
+    </div>
+
+    <!-- Record Button -->
+    <button id="recordBtn" class="state-loading" disabled>⏳ Loading AI Models…</button>
+
+    <!-- Output Card -->
+    <div class="card">
+        <div class="card-title">📄 Output</div>
+        <div class="out-row">
+            <div class="out-box" id="box-transcript">
+                <div class="out-lang">🇬🇧 English (Input)</div>
+                <div class="out-text" id="transcriptText">Waiting for speech…</div>
+            </div>
+            <div class="out-box" id="box-translation">
+                <div class="out-lang">🇪🇸 Spanish (Output)</div>
+                <div class="out-text" id="translationText">Awaiting pipeline…</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer chips -->
+    <div class="footer">
+        <span class="chip">WebAssembly SIMD</span>
+        <span class="chip">ARM NEON</span>
+        <span class="chip">No internet after first load</span>
+        <span class="chip">No data leaves device</span>
+        <span class="chip">Transformers.js 2.x</span>
     </div>
 
     <script type="module" src="./app.js"></script>

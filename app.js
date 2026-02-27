@@ -1,157 +1,244 @@
-// ── DOM Refs ─────────────────────────────────────────────────────────────────
-const loadingPanel = document.getElementById('loadingPanel');
-const progressBar = document.getElementById('progressBar');
-const loadPct = document.getElementById('loadPct');
-const etaText = document.getElementById('etaText');
-const statusBox = document.getElementById('statusBox');
-const transcriptText = document.getElementById('transcriptText');
-const translationText = document.getElementById('translationText');
-const recordBtn = document.getElementById('recordBtn');
+// ─────────────────────────────────────────────────────────────────────────────
+// app.js  –  Main UI controller
+// ─────────────────────────────────────────────────────────────────────────────
 
-// ── Loading State ─────────────────────────────────────────────────────────────
-// Weights: whisper=~40 MB, marian=~75 MB, tts=~150 MB → total ~265 MB
-const MODEL_WEIGHTS = { whisper: 40, marian: 75, tts: 150 };
-const TOTAL_MB = Object.values(MODEL_WEIGHTS).reduce((a, b) => a + b, 0);
+// ── DOM ───────────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
 
-// currentPct[model] = 0..100
-const currentPct = { whisper: 0, marian: 0, tts: 0 };
-// which model is active
-let activeModel = null;
+const loadingCard = $('loadingCard');
+const overallBar = $('overallBar');
+const overallPct = $('overallPct');
+const loadEta = $('loadEta');
+const errorBanner = $('errorBanner');
+const errorMsg = $('errorMsg');
+const pipelineCard = $('pipelineCard');
+const micMeter = $('micMeter');
+const micDur = $('micDur');
+const levelBars = $('levelBars');
+const recordBtn = $('recordBtn');
+const transcriptText = $('transcriptText');
+const translationText = $('translationText');
+const boxTranscript = $('box-transcript');
+const boxTranslation = $('box-translation');
+
+// ─── Build mic level bars ─────────────────────────────────────────────────────
+for (let i = 0; i < 22; i++) {
+    const b = document.createElement('div');
+    b.className = 'level-bar';
+    levelBars.appendChild(b);
+}
+const bars = levelBars.querySelectorAll('.level-bar');
+
+// ─── Model loading state ──────────────────────────────────────────────────────
+const MODEL_MB = { whisper: 40, marian: 75, tts: 150 };
+const TOTAL_MB = Object.values(MODEL_MB).reduce((a, b) => a + b, 0);
+const modelPct = { whisper: 0, marian: 0, tts: 0 };
 let loadStart = Date.now();
 
-function updateOverallProgress() {
-    // Weighted average of each model's progress contribution
-    const done = Object.entries(currentPct).reduce((acc, [k, p]) => {
-        return acc + (p / 100) * MODEL_WEIGHTS[k];
-    }, 0);
-    const overall = Math.round((done / TOTAL_MB) * 100);
-    progressBar.style.width = overall + '%';
-    loadPct.textContent = overall + '%';
+function updateOverall() {
+    const doneMB = Object.entries(modelPct).reduce((a, [k, p]) => a + (p / 100) * MODEL_MB[k], 0);
+    const overall = Math.min(100, Math.round((doneMB / TOTAL_MB) * 100));
+    overallBar.style.width = overall + '%';
+    overallPct.textContent = overall + '%';
 
-    // ETA estimate
-    const elapsed = (Date.now() - loadStart) / 1000; // seconds
-    if (elapsed > 3 && overall > 2) {
-        const totalEstSec = (elapsed / overall) * 100;
-        const remaining = Math.round(totalEstSec - elapsed);
-        if (remaining > 0) {
-            const mins = Math.floor(remaining / 60);
-            const secs = remaining % 60;
-            const etaStr = mins > 0 ? `~${mins}m ${secs}s remaining` : `~${secs}s remaining`;
-            etaText.textContent = `Downloading models… ${etaStr}`;
+    const elapsed = (Date.now() - loadStart) / 1000;
+    if (elapsed > 4 && overall > 3) {
+        const remaining = Math.round((elapsed / overall) * (100 - overall));
+        if (remaining > 1) {
+            const m = Math.floor(remaining / 60), s = remaining % 60;
+            loadEta.textContent = `Downloading… ETA ${m > 0 ? m + 'm ' : ''}${s}s`;
         } else {
-            etaText.textContent = 'Almost done — finalizing…';
+            loadEta.textContent = 'Finalising — almost ready…';
         }
     }
 }
 
-function setStepState(model, state) {
-    // state: 'pending' | 'active' | 'done'
-    const row = document.getElementById(`step-${model}`);
+function setModelState(key, state, filePath, pct) {
+    const row = $(`mrow-${key}`);
+    const bar = $(`mbar-${key}`);
+    const pctEl = $(`mpct-${key}`);
+    const indEl = $(`minds-${key}`);
+    const fileEl = $(`mfile-${key}`);
     if (!row) return;
 
-    // Clear classes
-    row.classList.remove('active', 'done');
+    row.className = 'model-row' + (state === 'active' ? ' active' : state === 'done' ? ' done' : '');
 
-    // Remove old spinner/check/dot
-    const old = row.querySelector('.step-spin, .step-check, .step-dot');
-    if (old) old.remove();
+    // indicator icon
+    indEl.outerHTML = state === 'active'
+        ? `<div class="spinner" id="minds-${key}"></div>`
+        : state === 'done'
+            ? `<div class="check-icon" id="minds-${key}">✓</div>`
+            : `<div class="idle-dot"  id="minds-${key}"></div>`;
 
-    if (state === 'active') {
-        row.classList.add('active');
-        const spin = document.createElement('span');
-        spin.className = 'step-spin';
-        row.appendChild(spin);
-    } else if (state === 'done') {
-        row.classList.add('done');
-        const check = document.createElement('span');
-        check.className = 'step-check';
-        check.textContent = '✓';
-        row.appendChild(check);
-    } else {
-        // pending
-        const dot = document.createElement('span');
-        dot.className = 'step-dot';
-        row.appendChild(dot);
+    if (typeof pct === 'number') {
+        bar.style.width = pct + '%';
+        pctEl.textContent = pct + '%';
+    }
+    if (filePath) {
+        // show just the filename, not full URL
+        const fname = filePath.split('/').pop().split('?')[0];
+        fileEl.textContent = fname || filePath;
+    }
+    if (state === 'done') {
+        bar.style.width = '100%';
+        pctEl.textContent = '100%';
+        fileEl.textContent = '✓ Cached';
     }
 }
 
-// ── Audio State ───────────────────────────────────────────────────────────────
-let audioContext;
-let mediaStream;
-let processor;
+// ─── Pipeline step state ──────────────────────────────────────────────────────
+// state: 'idle' | 'active' | 'done' | 'error'
+const stepTimers = {};  // stepId → { start, interval }
+
+function setStep(id, state, desc) {
+    const step = $(`ps-${id}`);
+    const indEl = $(`pi-${id}`);
+    const pbEl = $(`pb-${id}`);
+    const timerEl = $(`pt-${id}`);
+    if (!step) return;
+
+    step.className = 'p-step' + (state === 'active' ? ' active' : state === 'done' ? ' done' : state === 'error' ? ' error' : '');
+
+    // update description if provided
+    if (desc) step.querySelector('.p-step-desc').textContent = desc;
+
+    // indicator
+    const newInd = state === 'active'
+        ? `<div class="spinner" id="pi-${id}"></div>`
+        : state === 'done'
+            ? `<span class="check-icon" id="pi-${id}">✓</span>`
+            : state === 'error'
+                ? `<span style="color:var(--red);font-size:.85rem" id="pi-${id}">✕</span>`
+                : `<div class="idle-dot" id="pi-${id}"></div>`;
+    $(`pi-${id}`).outerHTML = newInd;
+
+    // animated progress bar (indeterminate when active, hidden otherwise)
+    if (pbEl) {
+        if (state === 'active') {
+            pbEl.style.display = 'block';
+            pbEl.classList.add('indeterminate');
+        } else {
+            pbEl.style.display = 'none';
+            pbEl.classList.remove('indeterminate');
+        }
+    }
+
+    // timer
+    if (state === 'active') {
+        const t0 = Date.now();
+        stepTimers[id] && clearInterval(stepTimers[id]);
+        stepTimers[id] = setInterval(() => {
+            const secs = ((Date.now() - t0) / 1000).toFixed(1);
+            if (timerEl) timerEl.textContent = secs + 's';
+        }, 100);
+    } else {
+        clearInterval(stepTimers[id]);
+        // keep last time shown when done/error; reset to '—' when idle
+        if (state === 'idle') timerEl.textContent = '—';
+    }
+}
+
+// ─── Error display ────────────────────────────────────────────────────────────
+function showError(msg) {
+    errorMsg.textContent = msg;
+    errorBanner.style.display = 'block';
+    recordBtn.className = 'state-ready';
+    recordBtn.disabled = false;
+    recordBtn.textContent = '🎙 Hold to Speak';
+}
+
+// ─── Audio / recording state ──────────────────────────────────────────────────
+let audioContext, mediaStream, processor, analyser;
 let audioSegments = [];
 let isRecording = false;
+let recStart = 0;
+let recTimer = null;
+let animFrame = null;
 
-// ── Worker ────────────────────────────────────────────────────────────────────
+function drawMicLevel() {
+    if (!analyser) return;
+    const buf = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(buf);
+
+    bars.forEach((bar, i) => {
+        const idx = Math.floor((i / bars.length) * buf.length);
+        const h = Math.round((buf[idx] / 255) * 100);
+        bar.style.height = Math.max(4, h) + '%';
+        bar.style.background = h > 60
+            ? 'rgba(244,63,94,0.85)'
+            : h > 30
+                ? 'rgba(251,191,36,0.7)'
+                : 'rgba(244,63,94,0.3)';
+    });
+    animFrame = requestAnimationFrame(drawMicLevel);
+}
+
+// ─── Worker ───────────────────────────────────────────────────────────────────
 const worker = new Worker('worker.js', { type: 'module' });
 
-worker.addEventListener('message', event => {
-    const data = event.data;
-
-    // ── Loading Phase Events ──────────────────────────────────────────────────
+worker.addEventListener('message', ({ data }) => {
+    // ── A: Model loading events ──────────────────────────────────────────────
     if (data.status === 'load_start') {
-        activeModel = data.model;
-        setStepState(data.model, 'active');
-        const names = { whisper: 'Whisper STT', marian: 'MarianMT Translator', tts: 'SpeechT5 TTS' };
-        etaText.textContent = `Loading ${names[data.model] || data.model}…`;
+        setModelState(data.model, 'active', '', 0);
 
     } else if (data.status === 'model_progress') {
-        currentPct[data.model] = data.pct;
-        updateOverallProgress();
+        modelPct[data.model] = data.pct;
+        setModelState(data.model, 'active', data.file, data.pct);
+        updateOverall();
 
     } else if (data.status === 'model_done') {
-        currentPct[data.model] = 100;
-        setStepState(data.model, 'done');
-        updateOverallProgress();
+        modelPct[data.model] = 100;
+        setModelState(data.model, 'done');
+        updateOverall();
 
     } else if (data.status === 'init_done') {
-        // All 3 models ready
-        currentPct.whisper = 100;
-        currentPct.marian = 100;
-        currentPct.tts = 100;
-        progressBar.style.width = '100%';
-        loadPct.textContent = '100%';
-        setStepState('whisper', 'done');
-        setStepState('marian', 'done');
-        setStepState('tts', 'done');
-        etaText.textContent = '✅ All models cached — works offline now!';
+        // Force all 100%
+        ['whisper', 'marian', 'tts'].forEach(k => { modelPct[k] = 100; setModelState(k, 'done'); });
+        updateOverall();
+        loadEta.textContent = '✅ All models cached — works offline now!';
 
-        // Transition UI after a short pause
         setTimeout(() => {
-            loadingPanel.style.display = 'none';
-            statusBox.style.display = 'flex';
-            statusBox.className = 'ready';
-            statusBox.textContent = '✅ Ready! Hold to Speak.';
+            loadingCard.style.display = 'none';
+            recordBtn.className = 'state-ready';
             recordBtn.disabled = false;
             recordBtn.textContent = '🎙 Hold to Speak';
-        }, 800);
+        }, 700);
 
-        // ── Inference Phase Events ────────────────────────────────────────────────
+        // ── B: Inference pipeline events ─────────────────────────────────────────
     } else if (data.status === 'transcribing') {
-        setStatus('busy', '🎙 Processing speech on Arm CPU…');
-        transcriptText.textContent = 'Analysing audio…';
-        transcriptText.style.color = '#ffc107';
+        pipelineCard.style.display = 'block';
+        setStep('capture', 'done', `Captured ${(audioSegments.reduce((a, b) => a + b.length, 0) / 16000).toFixed(1)}s of audio`);
+        setStep('stt', 'active');
+        setStep('translate', 'idle');
+        setStep('tts', 'idle');
+        setStep('play', 'idle');
+
+        transcriptText.textContent = 'Running Whisper on Arm CPU…';
+        transcriptText.className = 'out-text processing';
 
     } else if (data.status === 'transcribed') {
+        setStep('stt', 'done', `Recognised: "${data.text.slice(0, 40)}${data.text.length > 40 ? '…' : ''}"`);
         transcriptText.textContent = data.text;
-        transcriptText.style.color = '#fff';
+        transcriptText.className = 'out-text filled';
+        boxTranscript.classList.add('has-content');
 
     } else if (data.status === 'translating') {
-        setStatus('busy', '🌐 Running NMT translation…');
-        translationText.textContent = 'Generating translation…';
-        translationText.style.color = '#ffc107';
+        setStep('translate', 'active');
+        translationText.textContent = 'Running MarianMT NMT…';
+        translationText.className = 'out-text processing';
 
     } else if (data.status === 'translated') {
+        setStep('translate', 'done', `Translated: "${data.text.slice(0, 40)}${data.text.length > 40 ? '…' : ''}"`);
         translationText.textContent = data.text;
-        translationText.style.color = '#fff';
+        translationText.className = 'out-text filled';
+        boxTranslation.classList.add('has-content');
 
     } else if (data.status === 'synthesizing') {
-        setStatus('busy', '🔊 Running TTS vocoder…');
+        setStep('tts', 'active');
 
     } else if (data.status === 'audio_ready') {
-        setStatus('ready', '✅ Ready! Hold to Speak.');
-        recordBtn.disabled = false;
-        recordBtn.textContent = '🎙 Hold to Speak';
+        setStep('tts', 'done');
+        setStep('play', 'active', 'Streaming audio to speaker…');
 
         const buf = audioContext.createBuffer(1, data.audio.length, 16000);
         buf.getChannelData(0).set(data.audio);
@@ -160,77 +247,120 @@ worker.addEventListener('message', event => {
         src.connect(audioContext.destination);
         src.start();
 
+        const durSec = data.audio.length / 16000;
+        setTimeout(() => {
+            setStep('play', 'done', `Played ${durSec.toFixed(1)}s of audio`);
+            recordBtn.className = 'state-ready';
+            recordBtn.disabled = false;
+            recordBtn.textContent = '🎙 Hold to Speak';
+        }, durSec * 1000);
+
+        // ── C: Error ─────────────────────────────────────────────────────────────
     } else if (data.status === 'error') {
-        // Show error in both panels
-        etaText.textContent = '❌ ' + data.message;
-        setStatus('error', '❌ ' + data.message);
-        recordBtn.disabled = false;
-        recordBtn.textContent = '🎙 Hold to Speak';
+        // mark whichever pipeline step was active as error
+        ['stt', 'translate', 'tts', 'play'].forEach(id => {
+            if ($(`ps-${id}`)?.classList.contains('active')) setStep(id, 'error', data.message);
+        });
+        showError(data.message);
+        // also show in loading card if still visible
+        if (loadingCard.style.display !== 'none') {
+            loadEta.textContent = '❌ ' + data.message;
+            loadEta.style.color = '#f43f5e';
+        }
     }
 });
 
-function setStatus(cls, msg) {
-    statusBox.className = cls;
-    statusBox.textContent = msg;
-}
-
-// ── Recording ─────────────────────────────────────────────────────────────────
-const startRecording = async () => {
+// ─── Recording ────────────────────────────────────────────────────────────────
+async function startRecording() {
     if (isRecording) return;
     isRecording = true;
     audioSegments = [];
+    recStart = Date.now();
 
-    recordBtn.classList.add('pulse');
-    recordBtn.textContent = '🔴 Listening…';
-    transcriptText.textContent = 'Listening to microphone…';
-    transcriptText.style.color = '#aab0c0';
-    translationText.textContent = 'Waiting for pipeline…';
-    translationText.style.color = '#aab0c0';
+    // Show pipeline card early, mark step 1 active
+    pipelineCard.style.display = 'block';
+    setStep('capture', 'active', 'Recording from microphone at 16 kHz…');
+    setStep('stt', 'idle');
+    setStep('translate', 'idle');
+    setStep('tts', 'idle');
+    setStep('play', 'idle');
+
+    recordBtn.className = 'state-recording';
+    recordBtn.textContent = '🔴 Release to Process';
+
+    transcriptText.textContent = 'Listening…';
+    transcriptText.className = 'out-text';
+    translationText.textContent = 'Awaiting pipeline…';
+    translationText.className = 'out-text';
 
     try {
         mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
 
         const source = audioContext.createMediaStreamSource(mediaStream);
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 64;
         processor = audioContext.createScriptProcessor(4096, 1, 1);
 
-        processor.onaudioprocess = (e) => {
+        processor.onaudioprocess = e => {
             audioSegments.push(new Float32Array(e.inputBuffer.getChannelData(0)));
         };
 
+        source.connect(analyser);
         source.connect(processor);
         processor.connect(audioContext.destination);
-    } catch (e) {
-        alert('Microphone permission denied or unsupported in this browser.');
-        isRecording = false;
-        recordBtn.classList.remove('pulse');
-        recordBtn.textContent = '🎙 Hold to Speak';
-    }
-};
 
-const stopRecording = () => {
+        // Show mic meter
+        micMeter.style.display = 'block';
+        drawMicLevel();
+
+        // Duration counter
+        recTimer = setInterval(() => {
+            const secs = ((Date.now() - recStart) / 1000).toFixed(1);
+            micDur.textContent = secs + 's';
+        }, 100);
+
+    } catch (e) {
+        isRecording = false;
+        showError('Microphone access denied: ' + e.message);
+        setStep('capture', 'error', 'Microphone permission denied');
+        recordBtn.className = 'state-ready';
+        recordBtn.textContent = '🎙 Hold to Speak';
+        micMeter.style.display = 'none';
+    }
+}
+
+function stopRecording() {
     if (!isRecording) return;
     isRecording = false;
 
-    recordBtn.classList.remove('pulse');
-    recordBtn.textContent = 'Processing…';
+    clearInterval(recTimer);
+    cancelAnimationFrame(animFrame);
+    micMeter.style.display = 'none';
+    bars.forEach(b => b.style.height = '4px');
+
+    const durSec = ((Date.now() - recStart) / 1000).toFixed(1);
+    setStep('capture', 'done', `Captured ${durSec}s of audio`);
+
+    recordBtn.className = 'state-processing';
     recordBtn.disabled = true;
+    recordBtn.textContent = '⚙ Processing Pipeline…';
 
-    processor.disconnect();
-    mediaStream.getTracks().forEach(t => t.stop());
+    processor?.disconnect();
+    mediaStream?.getTracks().forEach(t => t.stop());
 
-    // Flatten all captured PCM chunks
+    // Flatten PCM
     const totalLen = audioSegments.reduce((a, b) => a + b.length, 0);
     const flat = new Float32Array(totalLen);
     let offset = 0;
     for (const seg of audioSegments) { flat.set(seg, offset); offset += seg.length; }
 
     worker.postMessage({ type: 'process_audio', audio: flat });
-};
+}
 
-// ── Input Bindings ────────────────────────────────────────────────────────────
+// ─── Input bindings ───────────────────────────────────────────────────────────
 recordBtn.addEventListener('mousedown', startRecording);
 recordBtn.addEventListener('mouseup', stopRecording);
 recordBtn.addEventListener('mouseleave', () => { if (isRecording) stopRecording(); });
-recordBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
-recordBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
+recordBtn.addEventListener('touchstart', e => { e.preventDefault(); startRecording(); });
+recordBtn.addEventListener('touchend', e => { e.preventDefault(); stopRecording(); });
