@@ -365,11 +365,18 @@ async function startRecording() {
 }
 
 // ─── stopRecording ────────────────────────────────────────────────────────────
-async function stopRecording() {
-    if (!isRecording) return;
-    isRecording = false;
-    capturedDurSec = (Date.now() - recStart) / 1000;
+async function startRecording() {
+    if (isRecording) return;
 
+    // 1. IMMEDIATE Hardware Unlock (Must be first line)
+    if (!capCtx) {
+        capCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    await capCtx.resume();
+
+    isRecording = true;
+    recordedChunks = [];
+    recStart = Date.now();
     // 1. UI & Visualiser Cleanup
     clearInterval(recTimer);
     cancelAnimationFrame(animFrame);
@@ -379,47 +386,38 @@ async function stopRecording() {
     recordBtn.textContent = '⚙ Processing…';
 
     // 2. Stop Hardware
-    mediaStream?.getTracks().forEach(t => t.stop());
+    try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                channelCount: 1,
+                echoCancellation: false,
+                noiseSuppression: false, // Turn this off so it doesn't "gate" quiet speech
+            }
+        });
 
-    // 3. Handle the Data
-    mediaRecorder.onstop = async () => {
-        try {
-            if (recordedChunks.length === 0) throw new Error('No audio captured.');
+        const source = capCtx.createMediaStreamSource(mediaStream);
 
-            const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
-            const arrayBuffer = await blob.arrayBuffer();
+        // RE-LINK THE ANALYSER
+        analyser = capCtx.createAnalyser();
+        source.connect(analyser);
 
-            // USE A FRESH CONTEXT FOR DECODING
-            // On Arm Android, reusing a suspended context often returns 0-length buffers.
-            const decodeCtx = new (window.AudioContext || window.webkitAudioContext)();
+        // CRITICAL: On mobile, you MUST connect to destination for data to flow, 
+        // even if gain is 0.
+        const silent = capCtx.createGain();
+        silent.gain.value = 0;
+        source.connect(silent);
+        silent.connect(capCtx.destination);
 
-            recordBtn.textContent = '⚙ Decoding…';
-            const decoded = await decodeCtx.decodeAudioData(arrayBuffer);
-            await decodeCtx.close();
+        // ... MediaRecorder start ...
+        mediaRecorder = new MediaRecorder(mediaStream);
+        mediaRecorder.ondataavailable = e => {
+            if (e.data.size > 0) recordedChunks.push(e.data);
+        };
+        mediaRecorder.start(); // Remove the (100) interval for better stability
 
-            // 4. Resample to 16kHz (Whisper Standard)
-            recordBtn.textContent = '⚙ Resampling…';
-            const TARGET_RATE = 16000;
-            const offlineCtx = new OfflineAudioContext(1, decoded.duration * TARGET_RATE, TARGET_RATE);
-
-            const source = offlineCtx.createBufferSource();
-            source.buffer = decoded;
-            source.connect(offlineCtx.destination);
-            source.start();
-
-            const resampledBuffer = await offlineCtx.startRendering();
-            const float32Data = resampledBuffer.getChannelData(0);
-
-            // 5. Send to Worker
-            recordBtn.textContent = '⚙ AI Pipeline…';
-            worker.postMessage({ type: 'process_audio', audio: float32Data });
-
-        } catch (err) {
-            showError('Capture failed: ' + err.message);
-        }
-    };
-
-    mediaRecorder.stop();
+    } catch (err) {
+        showError("Mic access failed: " + err.message);
+    }
 }
 
 // ─── Input bindings ───────────────────────────────────────────────────────────
