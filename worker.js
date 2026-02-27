@@ -90,12 +90,27 @@ onmessage = async (e) => {
         const sttResult = await transcriber(audioData, { language: 'english', task: 'transcribe' });
         let text = sttResult.text.trim();
 
-        // If Whisper only heard noise or couldn't decode speech, provide fallback rather than crashing
-        if (!text || text.length < 1) {
-            text = "I heard a sound.";
+        // ── Stage 1.5: Clean & Filter ──────────────────────────────────────────
+        // Whisper Tiny can hallucinate common filler phrases or silence markers
+        const noisePatterns = [
+            /\[BLANK_AUDIO\]/i, /\[silence\]/i, /\[music\]/i, /\[noise\]/i,
+            /^the$/i, /^you$/i, /^thank you/i, /^i heard/i
+        ];
+
+        const isNoise = noisePatterns.some(p => p.test(text)) || text.length < 2;
+
+        if (isNoise) {
+            text = "(No clear speech detected)";
         }
 
         postMessage({ status: 'transcribed', text });
+
+        // If it's just noise, stop the pipeline early but gracefully
+        if (isNoise) {
+            postMessage({ status: 'translated', text: "(N/A)" });
+            postMessage({ status: 'audio_ready', audio: new Float32Array(0) });
+            return;
+        }
 
         // ── Stage 2: Neural Translation ─────────────────────────────────────────
         postMessage({ status: 'translating' });

@@ -211,19 +211,36 @@ worker.addEventListener('message', ({ data }) => {
         setStep('tts', 'active', 'Generating waveform…');
     } else if (data.status === 'audio_ready') {
         setStep('tts', 'done');
+
+        // If audio is empty (noise filtered out), just reset the UI
+        if (!data.audio || data.audio.length === 0) {
+            setStep('play', 'idle', 'No speech to play');
+            recordBtn.className = 'state-ready';
+            recordBtn.disabled = false;
+            recordBtn.textContent = '🎙 Hold to Speak';
+            return;
+        }
+
         setStep('play', 'active', 'Playing audio…');
 
         if (playCtx) {
             playCtx.resume().then(() => {
+                // Stop any existing playback before starting new one
+                if (audioBufferSource) {
+                    try { audioBufferSource.stop(); } catch (e) { }
+                }
+
                 const buf = playCtx.createBuffer(1, data.audio.length, 16000);
                 buf.getChannelData(0).set(data.audio);
-                const src = playCtx.createBufferSource();
+
+                audioBufferSource = playCtx.createBufferSource();
                 const gain = playCtx.createGain();
                 gain.gain.value = 4.0;
-                src.buffer = buf;
-                src.connect(gain);
+
+                audioBufferSource.buffer = buf;
+                audioBufferSource.connect(gain);
                 gain.connect(playCtx.destination);
-                src.start();
+                audioBufferSource.start();
 
                 const durSec = data.audio.length / 16000;
                 setTimeout(() => {
@@ -334,20 +351,48 @@ async function stopRecording() {
     const TARGET_RATE = 16000;
     const originalRate = capCtx.sampleRate;
 
-    // Manual Resampling (Linear Interpolation) - More reliable than OfflineCtx on some Arm CPUs
-    const resampledData = resampleAudio(result, originalRate, TARGET_RATE);
+    // Normalize volume before sending (helps Whisper Tiny significantly)
+    const normalized = normalizeAudio(result);
+
+    // Linear Interpolation Resampling - Better quality than nearest neighbor
+    const resampledData = resampleAudio(normalized, originalRate, TARGET_RATE);
 
     console.log(`[AI] Sending ${resampledData.length} samples to Worker`);
     worker.postMessage({ type: 'process_audio', audio: resampledData });
 }
 
-// Helper: Fast Linear Resampler
+// Helper: Linear Interpolation Resampler
 function resampleAudio(buffer, fromRate, toRate) {
+    if (fromRate === toRate) return buffer;
     const ratio = fromRate / toRate;
     const newLength = Math.round(buffer.length / ratio);
     const result = new Float32Array(newLength);
     for (let i = 0; i < newLength; i++) {
-        result[i] = buffer[Math.round(i * ratio)];
+        const coords = i * ratio;
+        const iLow = Math.floor(coords);
+        const iHigh = Math.ceil(coords);
+        const weight = coords - iLow;
+        if (iHigh < buffer.length) {
+            result[i] = buffer[iLow] * (1 - weight) + buffer[iHigh] * weight;
+        } else {
+            result[i] = buffer[iLow];
+        }
+    }
+    return result;
+}
+
+// Helper: Peak Normalization
+function normalizeAudio(buffer) {
+    let max = 0;
+    for (let i = 0; i < buffer.length; i++) {
+        const abs = Math.abs(buffer[i]);
+        if (abs > max) max = abs;
+    }
+    if (max === 0) return buffer;
+    const ratio = 1.0 / max;
+    const result = new Float32Array(buffer.length);
+    for (let i = 0; i < buffer.length; i++) {
+        result[i] = buffer[i] * ratio;
     }
     return result;
 }
