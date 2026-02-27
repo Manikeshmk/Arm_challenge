@@ -370,75 +370,52 @@ async function stopRecording() {
     isRecording = false;
     capturedDurSec = (Date.now() - recStart) / 1000;
 
+    // 1. UI & Visualiser Cleanup
     clearInterval(recTimer);
     cancelAnimationFrame(animFrame);
-    analyser = null;
     micMeter.style.display = 'none';
-    bars.forEach(b => { b.style.height = '4px'; });
-
     recordBtn.className = 'state-processing';
     recordBtn.disabled = true;
     recordBtn.textContent = '⚙ Processing…';
 
-    // Stop tracks immediately so OS mic indicator goes away
+    // 2. Stop Hardware
     mediaStream?.getTracks().forEach(t => t.stop());
 
-    // Close capCtx — we no longer need it
-    capCtx?.close().catch(() => { });
-    capCtx = null;
-
-    if (!mediaRecorder || mediaRecorder.state === 'inactive') {
-        showError('Nothing was recorded — please hold the button while speaking.');
-        return;
-    }
-
-    // Flush remaining chunks then decode
+    // 3. Handle the Data
     mediaRecorder.onstop = async () => {
         try {
-            if (recordedChunks.length === 0) {
-                throw new Error('No audio data captured. Try holding the button longer.');
-            }
+            if (recordedChunks.length === 0) throw new Error('No audio captured.');
 
-            recordBtn.textContent = '⚙ Decoding audio…';
-            const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+            const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
             const arrayBuffer = await blob.arrayBuffer();
 
-            // ── Decode using a plain AudioContext (no custom sampleRate!) ────────
-            // A sampleRate-constrained context can reject decodeAudioData for
-            // audio encoded at a different rate (e.g. 48kHz WebM on a 16kHz ctx).
+            // USE A FRESH CONTEXT FOR DECODING
+            // On Arm Android, reusing a suspended context often returns 0-length buffers.
             const decodeCtx = new (window.AudioContext || window.webkitAudioContext)();
-            let decoded;
-            try {
-                decoded = await decodeCtx.decodeAudioData(arrayBuffer);
-            } finally {
-                decodeCtx.close();   // always release, even on error
-            }
 
-            capturedDurSec = decoded.duration;
-            recordBtn.textContent = '⚙ Resampling to 16 kHz…';
+            recordBtn.textContent = '⚙ Decoding…';
+            const decoded = await decodeCtx.decodeAudioData(arrayBuffer);
+            await decodeCtx.close();
 
-            // ── Resample to 16 kHz mono (Whisper requirement) ────────────────────
+            // 4. Resample to 16kHz (Whisper Standard)
+            recordBtn.textContent = '⚙ Resampling…';
             const TARGET_RATE = 16000;
-            const offCtx = new OfflineAudioContext(
-                1,
-                Math.ceil(decoded.duration * TARGET_RATE),
-                TARGET_RATE
-            );
-            const offSrc = offCtx.createBufferSource();
-            offSrc.buffer = decoded;
-            offSrc.connect(offCtx.destination);
-            offSrc.start(0);
+            const offlineCtx = new OfflineAudioContext(1, decoded.duration * TARGET_RATE, TARGET_RATE);
 
-            const resampled = await offCtx.startRendering();
-            const float32 = resampled.getChannelData(0);
-            capturedDurSec = float32.length / TARGET_RATE;
+            const source = offlineCtx.createBufferSource();
+            source.buffer = decoded;
+            source.connect(offlineCtx.destination);
+            source.start();
 
-            recordBtn.textContent = '⚙ Running AI Pipeline…';
-            worker.postMessage({ type: 'process_audio', audio: float32 });
+            const resampledBuffer = await offlineCtx.startRendering();
+            const float32Data = resampledBuffer.getChannelData(0);
+
+            // 5. Send to Worker
+            recordBtn.textContent = '⚙ AI Pipeline…';
+            worker.postMessage({ type: 'process_audio', audio: float32Data });
 
         } catch (err) {
-            showError('Audio processing failed: ' + err.message);
-            setStep('capture', 'error', err.message);
+            showError('Capture failed: ' + err.message);
         }
     };
 
