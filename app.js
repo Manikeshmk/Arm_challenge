@@ -308,12 +308,13 @@ async function startRecording() {
 
     try {
         // Request mic — let browser choose sample rate (most compatible)
+        // Disabling processing ensures we capture ANY kind of audio/noise without it being muted by the browser
         mediaStream = await navigator.mediaDevices.getUserMedia({
             audio: {
                 channelCount: 1,
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true,
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
             }
         });
 

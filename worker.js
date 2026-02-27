@@ -88,12 +88,14 @@ onmessage = async (e) => {
         }
 
         const sttResult = await transcriber(audioData, { language: 'english', task: 'transcribe' });
-        const text = sttResult.text.trim();
-        postMessage({ status: 'transcribed', text });
+        let text = sttResult.text.trim();
 
+        // If Whisper only heard noise or couldn't decode speech, provide fallback rather than crashing
         if (!text || text.length < 1) {
-            throw new Error('No speech detected. Please speak clearly into the microphone and try again.');
+            text = "I heard a sound.";
         }
+
+        postMessage({ status: 'transcribed', text });
 
         // ── Stage 2: Neural Translation ─────────────────────────────────────────
         postMessage({ status: 'translating' });

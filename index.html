@@ -110,6 +110,19 @@
             margin-bottom: 0.8rem;
         }
 
+        /* Cards that live below the button get top spacing too */
+        #pipelineCard {
+            display: none;
+            /* hidden until first recording */
+            margin-top: 0.8rem;
+        }
+
+        /* Output card always has top spacing below the button area */
+        #pipelineCard~.card {
+            margin-top: 0;
+            /* pipeline card already provides the gap */
+        }
+
         .card-title {
             font-size: 0.65rem;
             font-weight: 700;
@@ -513,7 +526,8 @@
             border: 1px solid rgba(244, 63, 94, 0.25);
             border-radius: 14px;
             padding: 0.8rem 1.1rem;
-            margin-bottom: 0.8rem;
+            margin-top: 0.8rem;
+            /* appears below button — needs top not bottom margin */
         }
 
         .mic-header {
@@ -589,7 +603,8 @@
             align-items: center;
             justify-content: center;
             gap: 8px;
-            margin-bottom: 0.8rem;
+            margin-bottom: 0rem;
+            /* spacing is handled by children below */
         }
 
         #recordBtn.state-loading {
@@ -794,7 +809,24 @@
         <div id="loadEta">Starting… first load downloads ~265 MB of AI weights (cached forever after).</div>
     </div>
 
-    <!-- Pipeline Steps Card (shown during/after inference) -->
+    <!-- ═══════════════════════════════════════════════════════════════
+         RECORD BUTTON — anchored here, nothing above it changes after
+         the loading card disappears. All dynamic cards appear BELOW.
+    ═══════════════════════════════════════════════════════════════ -->
+    <button id="recordBtn" class="state-loading" disabled>⏳ Loading AI Models…</button>
+
+    <!-- Mic Level Meter — appears below button while recording -->
+    <div id="micMeter">
+        <div class="mic-header">
+            <div class="mic-label">
+                <div class="mic-rec-dot"></div> Recording
+            </div>
+            <span class="mic-dur" id="micDur">0.0s</span>
+        </div>
+        <div class="level-bars" id="levelBars"></div>
+    </div>
+
+    <!-- Pipeline Steps Card — appears below button after first use -->
     <div class="card" id="pipelineCard">
         <div class="card-title">⚙ Pipeline Progress</div>
         <div class="pipeline-steps">
@@ -804,7 +836,7 @@
                 <div class="p-step-num">1</div>
                 <div class="p-step-body">
                     <div class="p-step-label">🎙 Audio Capture</div>
-                    <div class="p-step-desc">Recording raw PCM from microphone at 16 kHz</div>
+                    <div class="p-step-desc">Recording audio from microphone</div>
                 </div>
                 <div class="p-step-right">
                     <span class="p-step-timer" id="pt-capture">—</span>
@@ -891,22 +923,6 @@
 
         </div>
     </div>
-
-    <!-- Mic Level Meter -->
-    <div id="micMeter">
-        <div class="mic-header">
-            <div class="mic-label">
-                <div class="mic-rec-dot"></div> Recording
-            </div>
-            <span class="mic-dur" id="micDur">0.0s</span>
-        </div>
-        <div class="level-bars" id="levelBars">
-            <!-- 20 bars inserted by JS -->
-        </div>
-    </div>
-
-    <!-- Record Button -->
-    <button id="recordBtn" class="state-loading" disabled>⏳ Loading AI Models…</button>
 
     <!-- Output Card -->
     <div class="card">
