@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arm Edge S2S Translation</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .container {
+            background-color: #1e1e1e;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.5);
+            width: 90%;
+            max-width: 500px;
+            text-align: center;
+        }
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+            color: #00d4ff;
+        }
+        p.subtitle {
+            font-size: 0.9rem;
+            color: #aaaaaa;
+            margin-bottom: 2rem;
+        }
+        .statusBox {
+            background-color: #2a2a2a;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+        }
+        button {
+            background-color: #00d4ff;
+            color: #000;
+            border: none;
+            padding: 1rem 2rem;
+            font-size: 1rem;
+            font-weight: 600;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: transform 0.2s, background-color 0.2s;
+            width: 100%;
+        }
+        button:hover {
+            transform: scale(1.05);
+            background-color: #00b8e6;
+        }
+        button:disabled {
+            background-color: #555555;
+            color: #888888;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .pulse {
+            animation: pulse 1.5s infinite;
+            background-color: #ff3366 !important;
+            color: #fff !important;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 51, 102, 0.7); }
+            70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(255, 51, 102, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 51, 102, 0); }
+        }
+        #transcript, #translation {
+            margin-top: 1rem;
+            font-size: 0.95rem;
+            text-align: left;
+            word-wrap: break-word;
+        }
+        .label {
+            color: #00d4ff;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            font-weight: 600;
+            display: block;
+            margin-bottom: 0.3rem;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>On-Device Speech-to-Speech</h1>
+        <p class="subtitle">Running 100% Locally on Mobile Arm CPU via WebAssembly SIMD/NEON</p>
+
+        <div class="statusBox" id="statusMessage">
+            Loading AI Engine (Weights cache download)... Please wait. (May take ~1 minute on first run)
+        </div>
+
+        <button id="recordBtn" disabled>Hold to Speak</button>
+
+        <div id="transcript">
+            <span class="label">TRANSCRIPTION:</span>
+            <span id="transcriptText" style="color:#aaa;">Waiting for speech...</span>
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid #333; margin: 1.5rem 0;">
+
+        <div id="translation">
+            <span class="label">TRANSLATION (Spanish):</span>
+            <span id="translationText" style="color:#aaa;">Waiting for pipeline...</span>
+        </div>
+    </div>
+
+    <!-- Import Transformers.js -->
+    <script type="module" src="./app.js"></script>
+</body>
+</html>
