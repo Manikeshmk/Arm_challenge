@@ -20,8 +20,8 @@ This repository contains an on-device, fully local speech-to-speech translation 
 ### Setup Instructions
 1. Clone this repository inside Termux:
     ```bash
-    git clone https://github.com/your-repo/arm-s2s.git
-    cd arm-s2s
+    git clone https://github.com/Manikeshmk/Arm_challenge.git
+    cd Arm_challenge
     ```
 2. Run the `setup.sh` script to pull dependencies, compile C++ tools with NEON optimizations, and download models:
     ```bash
