@@ -1,126 +1,458 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Arm Edge S2S Translation</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #121212;
+            background: linear-gradient(135deg, #0a0a0f 0%, #121220 50%, #0a0f1a 100%);
             color: #ffffff;
-            margin: 0;
+            min-height: 100vh;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-height: 100vh;
+            padding: 1rem;
         }
+
         .container {
-            background-color: #1e1e1e;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(20px);
             padding: 2rem;
-            border-radius: 12px;
-            box-shadow: 0 8px 16px rgba(0,0,0,0.5);
-            width: 90%;
-            max-width: 500px;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 212, 255, 0.05);
+            width: 92%;
+            max-width: 520px;
             text-align: center;
         }
+
+        .logo-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(0, 212, 255, 0.12);
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            border-radius: 30px;
+            padding: 4px 12px;
+            font-size: 0.72rem;
+            color: #00d4ff;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            margin-bottom: 1rem;
+        }
+
+        .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #00d4ff;
+            animation: blink 2s ease-in-out infinite;
+        }
+
+        @keyframes blink {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.2;
+            }
+        }
+
         h1 {
-            font-size: 1.5rem;
-            margin-bottom: 0.5rem;
+            font-size: 1.45rem;
+            font-weight: 700;
+            margin-bottom: 0.3rem;
+            background: linear-gradient(135deg, #00d4ff, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        p.subtitle {
+            font-size: 0.82rem;
+            color: #7a8399;
+            margin-bottom: 1.6rem;
+            line-height: 1.5;
+        }
+
+        /* === Loading Panel === */
+        #loadingPanel {
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            border-radius: 14px;
+            padding: 1.4rem 1.2rem;
+            margin-bottom: 1.4rem;
+        }
+
+        .load-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.6rem;
+        }
+
+        .load-title {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #aab0c0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        #loadPct {
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: #00d4ff;
+            min-width: 38px;
+            text-align: right;
+        }
+
+        .progress-track {
+            background: rgba(255, 255, 255, 0.07);
+            border-radius: 99px;
+            height: 8px;
+            overflow: hidden;
+            margin-bottom: 0.8rem;
+        }
+
+        #progressBar {
+            height: 100%;
+            width: 0%;
+            border-radius: 99px;
+            background: linear-gradient(90deg, #00d4ff, #a78bfa);
+            transition: width 0.5s ease;
+            position: relative;
+        }
+
+        #progressBar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 30px;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4));
+            border-radius: 99px;
+            animation: shimmer 1.5s infinite;
+        }
+
+        @keyframes shimmer {
+            0% {
+                opacity: 0;
+            }
+
+            50% {
+                opacity: 1;
+            }
+
+            100% {
+                opacity: 0;
+            }
+        }
+
+        .steps-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-top: 4px;
+        }
+
+        .step-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.02);
+            transition: background 0.3s;
+        }
+
+        .step-row.active {
+            background: rgba(0, 212, 255, 0.08);
+            border: 1px solid rgba(0, 212, 255, 0.2);
+        }
+
+        .step-row.done {
+            background: rgba(40, 167, 69, 0.08);
+            border: 1px solid rgba(40, 167, 69, 0.2);
+        }
+
+        .step-icon {
+            font-size: 0.95rem;
+            width: 20px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .step-label {
+            font-size: 0.78rem;
+            color: #7a8399;
+            flex: 1;
+            text-align: left;
+        }
+
+        .step-row.active .step-label {
             color: #00d4ff;
         }
-        p.subtitle {
-            font-size: 0.9rem;
-            color: #aaaaaa;
-            margin-bottom: 2rem;
+
+        .step-row.done .step-label {
+            color: #28a745;
         }
-        .statusBox {
-            background-color: #2a2a2a;
-            padding: 1rem;
-            border-radius: 8px;
-            margin-bottom: 1.5rem;
-            min-height: 60px;
+
+        .step-size {
+            font-size: 0.7rem;
+            color: #555;
+            margin-left: auto;
+        }
+
+        .step-spin {
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(0, 212, 255, 0.3);
+            border-top-color: #00d4ff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            flex-shrink: 0;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .step-check {
+            color: #28a745;
+            font-size: 0.85rem;
+            flex-shrink: 0;
+        }
+
+        .step-dot {
+            width: 6px;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .eta-text {
+            font-size: 0.73rem;
+            color: #556;
+            margin-top: 8px;
+            font-style: italic;
+        }
+
+        /* === Status Box (post-load) === */
+        #statusBox {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            border-radius: 12px;
+            padding: 0.9rem 1rem;
+            margin-bottom: 1.4rem;
+            font-size: 0.88rem;
+            color: #aab0c0;
+            min-height: 52px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 0.9rem;
+            gap: 8px;
+            transition: all 0.3s;
         }
-        button {
-            background-color: #00d4ff;
+
+        #statusBox.ready {
+            border-color: rgba(40, 167, 69, 0.4);
+            background: rgba(40, 167, 69, 0.08);
+            color: #5cb85c;
+        }
+
+        #statusBox.busy {
+            border-color: rgba(255, 193, 7, 0.4);
+            background: rgba(255, 193, 7, 0.06);
+            color: #ffc107;
+        }
+
+        #statusBox.error {
+            border-color: rgba(220, 53, 69, 0.4);
+            background: rgba(220, 53, 69, 0.06);
+            color: #dc3545;
+        }
+
+        /* === Button === */
+        #recordBtn {
+            background: linear-gradient(135deg, #00d4ff, #0099cc);
             color: #000;
             border: none;
             padding: 1rem 2rem;
             font-size: 1rem;
-            font-weight: 600;
+            font-weight: 700;
             border-radius: 50px;
             cursor: pointer;
-            transition: transform 0.2s, background-color 0.2s;
+            transition: transform 0.2s, box-shadow 0.2s;
             width: 100%;
+            letter-spacing: 0.3px;
+            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3);
         }
-        button:hover {
-            transform: scale(1.05);
-            background-color: #00b8e6;
+
+        #recordBtn:hover:not(:disabled) {
+            transform: scale(1.03);
+            box-shadow: 0 6px 28px rgba(0, 212, 255, 0.45);
         }
-        button:disabled {
-            background-color: #555555;
-            color: #888888;
+
+        #recordBtn:disabled {
+            background: linear-gradient(135deg, #2a2a35, #1e1e28);
+            color: #4a4a5a;
             cursor: not-allowed;
+            box-shadow: none;
             transform: none;
         }
+
         .pulse {
-            animation: pulse 1.5s infinite;
-            background-color: #ff3366 !important;
+            animation: pulse 1.5s infinite !important;
+            background: linear-gradient(135deg, #ff3366, #cc0033) !important;
             color: #fff !important;
+            box-shadow: 0 6px 28px rgba(255, 51, 102, 0.45) !important;
         }
+
         @keyframes pulse {
-            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 51, 102, 0.7); }
-            70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(255, 51, 102, 0); }
-            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 51, 102, 0); }
+            0% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.04);
+            }
+
+            100% {
+                transform: scale(1);
+            }
         }
-        #transcript, #translation {
-            margin-top: 1rem;
-            font-size: 0.95rem;
+
+        /* === Output === */
+        .output-section {
+            margin-top: 1.2rem;
             text-align: left;
-            word-wrap: break-word;
         }
-        .label {
+
+        .output-label {
+            font-size: 0.7rem;
             color: #00d4ff;
-            font-size: 0.8rem;
+            font-weight: 700;
             text-transform: uppercase;
-            font-weight: 600;
+            letter-spacing: 1px;
+            margin-bottom: 0.35rem;
             display: block;
-            margin-bottom: 0.3rem;
+        }
+
+        .output-text {
+            font-size: 0.92rem;
+            color: #aab0c0;
+            word-wrap: break-word;
+            line-height: 1.55;
+            padding: 0.6rem 0.8rem;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            min-height: 36px;
+        }
+
+        hr.divider {
+            border: 0;
+            border-top: 1px solid rgba(255, 255, 255, 0.07);
+            margin: 1.2rem 0;
+        }
+
+        .offline-badge {
+            margin-top: 1.3rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            font-size: 0.72rem;
+            color: #3a8a4a;
+            background: rgba(40, 167, 69, 0.06);
+            border: 1px solid rgba(40, 167, 69, 0.18);
+            border-radius: 30px;
+            padding: 5px 12px;
         }
     </style>
 </head>
+
 <body>
-
     <div class="container">
-        <h1>On-Device Speech-to-Speech</h1>
-        <p class="subtitle">Running 100% Locally on Mobile Arm CPU via WebAssembly SIMD/NEON</p>
+        <div class="logo-badge"><span class="dot"></span> Arm Edge AI</div>
+        <h1>On-Device Speech Translator</h1>
+        <p class="subtitle">100% local · WebAssembly SIMD/NEON · Works offline after first load</p>
 
-        <div class="statusBox" id="statusMessage">
-            Loading AI Engine (Weights cache download)... Please wait. (May take ~1 minute on first run)
+        <!-- Loading Panel (shown while models download) -->
+        <div id="loadingPanel">
+            <div class="load-header">
+                <span class="load-title">⬇&nbsp; Loading AI Engine</span>
+                <span id="loadPct">0%</span>
+            </div>
+            <div class="progress-track">
+                <div id="progressBar"></div>
+            </div>
+            <div class="steps-grid">
+                <div class="step-row" id="step-whisper">
+                    <span class="step-icon">🎙️</span>
+                    <span class="step-label">Whisper STT (speech recognition)</span>
+                    <span class="step-size">~40 MB</span>
+                    <span class="step-dot"></span>
+                </div>
+                <div class="step-row" id="step-marian">
+                    <span class="step-icon">🌐</span>
+                    <span class="step-label">MarianMT (EN→ES translation)</span>
+                    <span class="step-size">~75 MB</span>
+                    <span class="step-dot"></span>
+                </div>
+                <div class="step-row" id="step-tts">
+                    <span class="step-icon">🔊</span>
+                    <span class="step-label">SpeechT5 TTS (voice synthesis)</span>
+                    <span class="step-size">~150 MB</span>
+                    <span class="step-dot"></span>
+                </div>
+            </div>
+            <div class="eta-text" id="etaText">Starting download from CDN… This only happens once.</div>
         </div>
 
-        <button id="recordBtn" disabled>Hold to Speak</button>
+        <!-- Live status box (shown after loading) -->
+        <div id="statusBox" style="display:none;">Initializing…</div>
 
-        <div id="transcript">
-            <span class="label">TRANSCRIPTION:</span>
-            <span id="transcriptText" style="color:#aaa;">Waiting for speech...</span>
+        <button id="recordBtn" disabled>Loading AI Engine…</button>
+
+        <div class="output-section">
+            <span class="output-label">Transcription</span>
+            <div class="output-text" id="transcriptText" style="color:#3a3a4a;">Waiting for speech…</div>
         </div>
 
-        <hr style="border: 0; border-top: 1px solid #333; margin: 1.5rem 0;">
+        <hr class="divider">
 
-        <div id="translation">
-            <span class="label">TRANSLATION (Spanish):</span>
-            <span id="translationText" style="color:#aaa;">Waiting for pipeline...</span>
+        <div class="output-section">
+            <span class="output-label">Translation (Spanish)</span>
+            <div class="output-text" id="translationText" style="color:#3a3a4a;">Waiting for pipeline…</div>
+        </div>
+
+        <div class="offline-badge">
+            🔒 Runs 100% on-device · Offline after first load · No data leaves your device
         </div>
     </div>
 
-    <!-- Import Transformers.js -->
     <script type="module" src="./app.js"></script>
 </body>
+
 </html>
