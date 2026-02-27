@@ -106,25 +106,23 @@ function setStep(id, state, desc) {
                 ? `<span style="color:var(--red);font-size:.85rem" id="pi-${id}">✕</span>`
                 : `<div class="idle-dot"  id="pi-${id}"></div>`;
 
-    if (pbEl) {
-        pbEl.style.display = state === 'active' ? 'block' : 'none';
-    }
+    if (pbEl) pbEl.style.display = state === 'active' ? 'block' : 'none';
 
     if (state === 'active') {
         const t0 = Date.now();
         clearInterval(stepTimers[id]);
         stepTimers[id] = setInterval(() => {
-            const s = ((Date.now() - t0) / 1000).toFixed(1);
-            if (timerEl) timerEl.textContent = s + 's';
+            if (timerEl) timerEl.textContent = ((Date.now() - t0) / 1000).toFixed(1) + 's';
         }, 100);
     } else {
         clearInterval(stepTimers[id]);
-        if (state === 'idle') timerEl.textContent = '—';
+        if (state === 'idle' && timerEl) timerEl.textContent = '—';
     }
 }
 
 // ─── Error display ────────────────────────────────────────────────────────────
 function showError(msg) {
+    console.error('[App Error]', msg);
     errorMsg.textContent = msg;
     errorBanner.style.display = 'block';
     recordBtn.className = 'state-ready';
@@ -133,30 +131,24 @@ function showError(msg) {
 }
 
 // ─── Audio / recording state ──────────────────────────────────────────────────
-let audioContext, mediaStream, analyser, mediaRecorder;
+// NOTE: Three separate audio contexts for three separate jobs:
+//   capCtx  – visualiser during recording (created/closed each session)
+//   playCtx – TTS playback (persistent, created once after models load)
+//   MediaRecorder uses the raw stream; decodeAudioData uses a fresh plain ctx
+let capCtx = null;   // recording-session visualiser context
+let playCtx = null;   // persistent playback context for TTS
+let mediaStream = null;
+let mediaRecorder = null;
+let analyser = null;
 let recordedChunks = [];
+let capturedDurSec = 0;
 let isRecording = false;
 let recStart = 0;
 let recTimer = null;
 let animFrame = null;
 
-// Recorded audio duration in seconds (set when MediaRecorder stops)
-let capturedDurSec = 0;
-
-// ── Returns a MIME type MediaRecorder actually supports ──────────────────────
-function bestMimeType() {
-    const types = [
-        'audio/webm;codecs=opus',
-        'audio/webm',
-        'audio/ogg;codecs=opus',
-        'audio/ogg',
-        'audio/mp4',
-        ''
-    ];
-    return types.find(t => !t || MediaRecorder.isTypeSupported(t)) ?? '';
-}
-
-// ── Mic level visualiser (AnalyserNode, no ScriptProcessor) ──────────────────
+// ── Visualiser: AnalyserNode → SilentGain → destination ─────────────────────
+// Must be connected all the way to destination or Chrome won't process the graph
 function drawLevel() {
     if (!analyser) return;
     const buf = new Uint8Array(analyser.frequencyBinCount);
@@ -165,13 +157,24 @@ function drawLevel() {
         const idx = Math.floor((i / bars.length) * buf.length);
         const h = Math.max(4, Math.round((buf[idx] / 255) * 100));
         bar.style.height = h + '%';
-        bar.style.background = h > 60
-            ? 'rgba(244,63,94,0.9)'
-            : h > 25
-                ? 'rgba(251,191,36,0.75)'
+        bar.style.background = h > 60 ? 'rgba(244,63,94,0.9)'
+            : h > 25 ? 'rgba(251,191,36,0.75)'
                 : 'rgba(244,63,94,0.3)';
     });
     animFrame = requestAnimationFrame(drawLevel);
+}
+
+// ── Returns a MIME type MediaRecorder supports on this browser ────────────────
+function bestMimeType() {
+    const list = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/ogg',
+        'audio/mp4',
+        ''
+    ];
+    return list.find(t => !t || MediaRecorder.isTypeSupported(t)) ?? '';
 }
 
 // ─── Worker ───────────────────────────────────────────────────────────────────
@@ -179,7 +182,7 @@ const worker = new Worker('worker.js', { type: 'module' });
 
 worker.addEventListener('message', ({ data }) => {
 
-    // ── A: Model loading events ──────────────────────────────────────────────
+    // ── A: Model loading ─────────────────────────────────────────────────────
     if (data.status === 'load_start') {
         setModelState(data.model, 'active', '', 0);
 
@@ -197,6 +200,12 @@ worker.addEventListener('message', ({ data }) => {
         ['whisper', 'marian', 'tts'].forEach(k => { modelPct[k] = 100; setModelState(k, 'done'); });
         updateOverall();
         loadEta.textContent = '✅ All models cached — works offline now!';
+
+        // Create the persistent playback AudioContext now (requires prior user gesture
+        // on iOS, but model loading itself counts as enough interaction in practice)
+        playCtx = new (window.AudioContext || window.webkitAudioContext)();
+        playCtx.resume();
+
         setTimeout(() => {
             loadingCard.style.display = 'none';
             recordBtn.className = 'state-ready';
@@ -204,11 +213,11 @@ worker.addEventListener('message', ({ data }) => {
             recordBtn.textContent = '🎙 Hold to Speak';
         }, 700);
 
-        // ── B: Inference events ──────────────────────────────────────────────────
+        // ── B: Inference pipeline ─────────────────────────────────────────────────
     } else if (data.status === 'transcribing') {
         pipelineCard.style.display = 'block';
         setStep('capture', 'done', `Captured ${capturedDurSec.toFixed(1)}s of audio`);
-        setStep('stt', 'active', 'Running Whisper speech recognition on Arm CPU…');
+        setStep('stt', 'active', 'Running Whisper on Arm CPU WASM…');
         setStep('translate', 'idle');
         setStep('tts', 'idle');
         setStep('play', 'idle');
@@ -237,34 +246,35 @@ worker.addEventListener('message', ({ data }) => {
 
     } else if (data.status === 'audio_ready') {
         setStep('tts', 'done');
-        setStep('play', 'active', 'Streaming synthesised audio to speaker…');
+        setStep('play', 'active', 'Playing synthesised Spanish audio…');
 
-        // ── Play TTS audio with 4× gain boost (SpeechT5 output is quiet) ────────
-        const buf = audioContext.createBuffer(1, data.audio.length, 16000);
-        buf.getChannelData(0).set(data.audio);
+        // Resume playCtx (needed after inactivity on some browsers)
+        playCtx.resume().then(() => {
+            // x4 gain boost — SpeechT5 output is inherently quiet
+            const buf = playCtx.createBuffer(1, data.audio.length, 16000);
+            buf.getChannelData(0).set(data.audio);
 
-        const src = audioContext.createBufferSource();
-        const gain = audioContext.createGain();
-        gain.gain.value = 4.0;   // ← boost output volume x4
-        src.buffer = buf;
-        src.connect(gain);
-        gain.connect(audioContext.destination);
-        src.start();
+            const src = playCtx.createBufferSource();
+            const gain = playCtx.createGain();
+            gain.gain.value = 4.0;
+            src.buffer = buf;
+            src.connect(gain);
+            gain.connect(playCtx.destination);
+            src.start();
 
-        const durSec = data.audio.length / 16000;
-        setTimeout(() => {
-            setStep('play', 'done', `Played ${durSec.toFixed(1)}s of Spanish audio`);
-            recordBtn.className = 'state-ready';
-            recordBtn.disabled = false;
-            recordBtn.textContent = '🎙 Hold to Speak';
-        }, durSec * 1000 + 200);
+            const durSec = data.audio.length / 16000;
+            setTimeout(() => {
+                setStep('play', 'done', `Played ${durSec.toFixed(1)}s of Spanish audio`);
+                recordBtn.className = 'state-ready';
+                recordBtn.disabled = false;
+                recordBtn.textContent = '🎙 Hold to Speak';
+            }, durSec * 1000 + 200);
+        });
 
-        // ── C: Error ─────────────────────────────────────────────────────────────
+        // ── C: Error ──────────────────────────────────────────────────────────────
     } else if (data.status === 'error') {
         ['stt', 'translate', 'tts', 'play'].forEach(id => {
-            if ($(`ps-${id}`)?.classList.contains('active')) {
-                setStep(id, 'error', data.message);
-            }
+            if ($(`ps-${id}`)?.classList.contains('active')) setStep(id, 'error', data.message);
         });
         showError(data.message);
         if (loadingCard.style.display !== 'none') {
@@ -274,7 +284,7 @@ worker.addEventListener('message', ({ data }) => {
     }
 });
 
-// ─── Recording ────────────────────────────────────────────────────────────────
+// ─── startRecording ───────────────────────────────────────────────────────────
 async function startRecording() {
     if (isRecording) return;
     isRecording = true;
@@ -282,9 +292,8 @@ async function startRecording() {
     capturedDurSec = 0;
     recStart = Date.now();
 
-    // Show pipeline card, activate step 1
     pipelineCard.style.display = 'block';
-    setStep('capture', 'active', 'Recording from microphone at 16 kHz…');
+    setStep('capture', 'active', 'Recording microphone audio…');
     setStep('stt', 'idle');
     setStep('translate', 'idle');
     setStep('tts', 'idle');
@@ -298,113 +307,136 @@ async function startRecording() {
     translationText.className = 'out-text';
 
     try {
+        // Request mic — let browser choose sample rate (most compatible)
         mediaStream = await navigator.mediaDevices.getUserMedia({
             audio: {
                 channelCount: 1,
-                sampleRate: 16000,
                 echoCancellation: true,
                 noiseSuppression: true,
                 autoGainControl: true,
             }
         });
 
-        // Create AudioContext for visualiser ONLY — do NOT connect to destination
-        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-        await audioContext.resume();          // ← critical: un-suspend on mobile
+        // ── Visualiser audio graph ────────────────────────────────────────────
+        // capCtx runs at the browser's native rate (44100 / 48000 Hz).
+        // We do NOT set sampleRate:16000 here — that broke decodeAudioData.
+        capCtx = new (window.AudioContext || window.webkitAudioContext)();
+        await capCtx.resume();    // un-suspend (important on mobile Safari)
 
-        const source = audioContext.createMediaStreamSource(mediaStream);
-        analyser = audioContext.createAnalyser();
+        const source = capCtx.createMediaStreamSource(mediaStream);
+        analyser = capCtx.createAnalyser();
         analyser.fftSize = 64;
-        source.connect(analyser);
-        // NOT connected to destination → no echo / feedback
 
-        // Show mic meter + draw level bars
+        // Silent gain node — keeps graph connected to destination so
+        // Chromium actually processes it, but produces zero output (no echo)
+        const silent = capCtx.createGain();
+        silent.gain.value = 0;
+
+        source.connect(analyser);
+        source.connect(silent);
+        silent.connect(capCtx.destination);   // must reach destination
+
         micMeter.style.display = 'block';
         drawLevel();
 
-        // Duration counter
         recTimer = setInterval(() => {
             micDur.textContent = ((Date.now() - recStart) / 1000).toFixed(1) + 's';
         }, 100);
 
-        // ── MediaRecorder: reliable cross-browser audio capture ──────────────────
+        // ── MediaRecorder capture ─────────────────────────────────────────────
         const mime = bestMimeType();
-        mediaRecorder = new MediaRecorder(mediaStream, mime ? { mimeType: mime } : {});
+        const recOpts = mime ? { mimeType: mime } : {};
+        mediaRecorder = new MediaRecorder(mediaStream, recOpts);
+
         mediaRecorder.ondataavailable = e => {
             if (e.data && e.data.size > 0) recordedChunks.push(e.data);
         };
-        mediaRecorder.start(200);   // chunk every 200ms → works even for very short clips
+        mediaRecorder.start(100);   // flush every 100 ms — works for very short clips too
 
     } catch (err) {
         isRecording = false;
-        setStep('capture', 'error', 'Microphone permission denied');
-        showError('Microphone access denied: ' + err.message);
+        setStep('capture', 'error', err.message);
+        showError('Microphone access denied or unavailable: ' + err.message);
         micMeter.style.display = 'none';
         recordBtn.className = 'state-ready';
         recordBtn.textContent = '🎙 Hold to Speak';
     }
 }
 
+// ─── stopRecording ────────────────────────────────────────────────────────────
 async function stopRecording() {
     if (!isRecording) return;
     isRecording = false;
-
     capturedDurSec = (Date.now() - recStart) / 1000;
 
     clearInterval(recTimer);
     cancelAnimationFrame(animFrame);
+    analyser = null;
     micMeter.style.display = 'none';
     bars.forEach(b => { b.style.height = '4px'; });
 
     recordBtn.className = 'state-processing';
     recordBtn.disabled = true;
-    recordBtn.textContent = '⚙ Decoding Audio…';
+    recordBtn.textContent = '⚙ Processing…';
+
+    // Stop tracks immediately so OS mic indicator goes away
+    mediaStream?.getTracks().forEach(t => t.stop());
+
+    // Close capCtx — we no longer need it
+    capCtx?.close().catch(() => { });
+    capCtx = null;
 
     if (!mediaRecorder || mediaRecorder.state === 'inactive') {
-        showError('No audio was recorded — try holding the button longer.');
+        showError('Nothing was recorded — please hold the button while speaking.');
         return;
     }
 
-    // Wait for MediaRecorder to flush all chunks, then decode + resample
+    // Flush remaining chunks then decode
     mediaRecorder.onstop = async () => {
         try {
-            mediaStream?.getTracks().forEach(t => t.stop());
-
             if (recordedChunks.length === 0) {
-                throw new Error('No audio chunks received. Hold the button for at least 0.5 seconds.');
+                throw new Error('No audio data captured. Try holding the button longer.');
             }
 
+            recordBtn.textContent = '⚙ Decoding audio…';
             const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
             const arrayBuffer = await blob.arrayBuffer();
 
-            // Decode compressed audio → AudioBuffer
-            const decoded = await audioContext.decodeAudioData(arrayBuffer);
-            capturedDurSec = decoded.duration;
+            // ── Decode using a plain AudioContext (no custom sampleRate!) ────────
+            // A sampleRate-constrained context can reject decodeAudioData for
+            // audio encoded at a different rate (e.g. 48kHz WebM on a 16kHz ctx).
+            const decodeCtx = new (window.AudioContext || window.webkitAudioContext)();
+            let decoded;
+            try {
+                decoded = await decodeCtx.decodeAudioData(arrayBuffer);
+            } finally {
+                decodeCtx.close();   // always release, even on error
+            }
 
+            capturedDurSec = decoded.duration;
             recordBtn.textContent = '⚙ Resampling to 16 kHz…';
 
-            // Resample to 16 kHz mono Float32Array (required by Whisper)
-            const targetRate = 16000;
+            // ── Resample to 16 kHz mono (Whisper requirement) ────────────────────
+            const TARGET_RATE = 16000;
             const offCtx = new OfflineAudioContext(
                 1,
-                Math.ceil(decoded.duration * targetRate),
-                targetRate
+                Math.ceil(decoded.duration * TARGET_RATE),
+                TARGET_RATE
             );
-            const src = offCtx.createBufferSource();
-            src.buffer = decoded;
-            src.connect(offCtx.destination);
-            src.start(0);
+            const offSrc = offCtx.createBufferSource();
+            offSrc.buffer = decoded;
+            offSrc.connect(offCtx.destination);
+            offSrc.start(0);
 
             const resampled = await offCtx.startRendering();
             const float32 = resampled.getChannelData(0);
-
-            capturedDurSec = float32.length / targetRate;
+            capturedDurSec = float32.length / TARGET_RATE;
 
             recordBtn.textContent = '⚙ Running AI Pipeline…';
             worker.postMessage({ type: 'process_audio', audio: float32 });
 
         } catch (err) {
-            showError('Audio decode failed: ' + err.message);
+            showError('Audio processing failed: ' + err.message);
             setStep('capture', 'error', err.message);
         }
     };
