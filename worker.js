@@ -91,8 +91,8 @@ onmessage = async (e) => {
         const text = sttResult.text.trim();
         postMessage({ status: 'transcribed', text });
 
-        if (!text || text.length < 2) {
-            throw new Error('Audio was too quiet or unclear. Please speak louder and try again.');
+        if (!text || text.length < 1) {
+            throw new Error('No speech detected. Please speak clearly into the microphone and try again.');
         }
 
         // ── Stage 2: Neural Translation ─────────────────────────────────────────

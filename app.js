@@ -21,7 +21,7 @@ const translationText = $('translationText');
 const boxTranscript = $('box-transcript');
 const boxTranslation = $('box-translation');
 
-// ─── Build mic level bars ─────────────────────────────────────────────────────
+// ─── Build mic level visualiser bars ─────────────────────────────────────────
 for (let i = 0; i < 22; i++) {
     const b = document.createElement('div');
     b.className = 'level-bar';
@@ -63,19 +63,17 @@ function setModelState(key, state, filePath, pct) {
 
     row.className = 'model-row' + (state === 'active' ? ' active' : state === 'done' ? ' done' : '');
 
-    // indicator icon
     indEl.outerHTML = state === 'active'
-        ? `<div class="spinner" id="minds-${key}"></div>`
+        ? `<div class="spinner"    id="minds-${key}"></div>`
         : state === 'done'
             ? `<div class="check-icon" id="minds-${key}">✓</div>`
-            : `<div class="idle-dot"  id="minds-${key}"></div>`;
+            : `<div class="idle-dot"   id="minds-${key}"></div>`;
 
     if (typeof pct === 'number') {
         bar.style.width = pct + '%';
         pctEl.textContent = pct + '%';
     }
     if (filePath) {
-        // show just the filename, not full URL
         const fname = filePath.split('/').pop().split('?')[0];
         fileEl.textContent = fname || filePath;
     }
@@ -86,54 +84,41 @@ function setModelState(key, state, filePath, pct) {
     }
 }
 
-// ─── Pipeline step state ──────────────────────────────────────────────────────
-// state: 'idle' | 'active' | 'done' | 'error'
-const stepTimers = {};  // stepId → { start, interval }
+// ─── Pipeline step helpers ────────────────────────────────────────────────────
+const stepTimers = {};
 
 function setStep(id, state, desc) {
     const step = $(`ps-${id}`);
-    const indEl = $(`pi-${id}`);
     const pbEl = $(`pb-${id}`);
     const timerEl = $(`pt-${id}`);
     if (!step) return;
 
-    step.className = 'p-step' + (state === 'active' ? ' active' : state === 'done' ? ' done' : state === 'error' ? ' error' : '');
+    step.className = 'p-step' +
+        (state === 'active' ? ' active' : state === 'done' ? ' done' : state === 'error' ? ' error' : '');
 
-    // update description if provided
     if (desc) step.querySelector('.p-step-desc').textContent = desc;
 
-    // indicator
-    const newInd = state === 'active'
-        ? `<div class="spinner" id="pi-${id}"></div>`
+    $(`pi-${id}`).outerHTML = state === 'active'
+        ? `<div class="spinner"   id="pi-${id}"></div>`
         : state === 'done'
             ? `<span class="check-icon" id="pi-${id}">✓</span>`
             : state === 'error'
                 ? `<span style="color:var(--red);font-size:.85rem" id="pi-${id}">✕</span>`
-                : `<div class="idle-dot" id="pi-${id}"></div>`;
-    $(`pi-${id}`).outerHTML = newInd;
+                : `<div class="idle-dot"  id="pi-${id}"></div>`;
 
-    // animated progress bar (indeterminate when active, hidden otherwise)
     if (pbEl) {
-        if (state === 'active') {
-            pbEl.style.display = 'block';
-            pbEl.classList.add('indeterminate');
-        } else {
-            pbEl.style.display = 'none';
-            pbEl.classList.remove('indeterminate');
-        }
+        pbEl.style.display = state === 'active' ? 'block' : 'none';
     }
 
-    // timer
     if (state === 'active') {
         const t0 = Date.now();
-        stepTimers[id] && clearInterval(stepTimers[id]);
+        clearInterval(stepTimers[id]);
         stepTimers[id] = setInterval(() => {
-            const secs = ((Date.now() - t0) / 1000).toFixed(1);
-            if (timerEl) timerEl.textContent = secs + 's';
+            const s = ((Date.now() - t0) / 1000).toFixed(1);
+            if (timerEl) timerEl.textContent = s + 's';
         }, 100);
     } else {
         clearInterval(stepTimers[id]);
-        // keep last time shown when done/error; reset to '—' when idle
         if (state === 'idle') timerEl.textContent = '—';
     }
 }
@@ -148,35 +133,52 @@ function showError(msg) {
 }
 
 // ─── Audio / recording state ──────────────────────────────────────────────────
-let audioContext, mediaStream, processor, analyser;
-let audioSegments = [];
+let audioContext, mediaStream, analyser, mediaRecorder;
+let recordedChunks = [];
 let isRecording = false;
 let recStart = 0;
 let recTimer = null;
 let animFrame = null;
 
-function drawMicLevel() {
+// Recorded audio duration in seconds (set when MediaRecorder stops)
+let capturedDurSec = 0;
+
+// ── Returns a MIME type MediaRecorder actually supports ──────────────────────
+function bestMimeType() {
+    const types = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/ogg',
+        'audio/mp4',
+        ''
+    ];
+    return types.find(t => !t || MediaRecorder.isTypeSupported(t)) ?? '';
+}
+
+// ── Mic level visualiser (AnalyserNode, no ScriptProcessor) ──────────────────
+function drawLevel() {
     if (!analyser) return;
     const buf = new Uint8Array(analyser.frequencyBinCount);
     analyser.getByteFrequencyData(buf);
-
     bars.forEach((bar, i) => {
         const idx = Math.floor((i / bars.length) * buf.length);
-        const h = Math.round((buf[idx] / 255) * 100);
-        bar.style.height = Math.max(4, h) + '%';
+        const h = Math.max(4, Math.round((buf[idx] / 255) * 100));
+        bar.style.height = h + '%';
         bar.style.background = h > 60
-            ? 'rgba(244,63,94,0.85)'
-            : h > 30
-                ? 'rgba(251,191,36,0.7)'
+            ? 'rgba(244,63,94,0.9)'
+            : h > 25
+                ? 'rgba(251,191,36,0.75)'
                 : 'rgba(244,63,94,0.3)';
     });
-    animFrame = requestAnimationFrame(drawMicLevel);
+    animFrame = requestAnimationFrame(drawLevel);
 }
 
 // ─── Worker ───────────────────────────────────────────────────────────────────
 const worker = new Worker('worker.js', { type: 'module' });
 
 worker.addEventListener('message', ({ data }) => {
+
     // ── A: Model loading events ──────────────────────────────────────────────
     if (data.status === 'load_start') {
         setModelState(data.model, 'active', '', 0);
@@ -192,11 +194,9 @@ worker.addEventListener('message', ({ data }) => {
         updateOverall();
 
     } else if (data.status === 'init_done') {
-        // Force all 100%
         ['whisper', 'marian', 'tts'].forEach(k => { modelPct[k] = 100; setModelState(k, 'done'); });
         updateOverall();
         loadEta.textContent = '✅ All models cached — works offline now!';
-
         setTimeout(() => {
             loadingCard.style.display = 'none';
             recordBtn.className = 'state-ready';
@@ -204,65 +204,69 @@ worker.addEventListener('message', ({ data }) => {
             recordBtn.textContent = '🎙 Hold to Speak';
         }, 700);
 
-        // ── B: Inference pipeline events ─────────────────────────────────────────
+        // ── B: Inference events ──────────────────────────────────────────────────
     } else if (data.status === 'transcribing') {
         pipelineCard.style.display = 'block';
-        setStep('capture', 'done', `Captured ${(audioSegments.reduce((a, b) => a + b.length, 0) / 16000).toFixed(1)}s of audio`);
-        setStep('stt', 'active');
+        setStep('capture', 'done', `Captured ${capturedDurSec.toFixed(1)}s of audio`);
+        setStep('stt', 'active', 'Running Whisper speech recognition on Arm CPU…');
         setStep('translate', 'idle');
         setStep('tts', 'idle');
         setStep('play', 'idle');
-
         transcriptText.textContent = 'Running Whisper on Arm CPU…';
         transcriptText.className = 'out-text processing';
 
     } else if (data.status === 'transcribed') {
-        setStep('stt', 'done', `Recognised: "${data.text.slice(0, 40)}${data.text.length > 40 ? '…' : ''}"`);
+        setStep('stt', 'done', `Recognised: "${data.text.slice(0, 50)}${data.text.length > 50 ? '…' : ''}"`);
         transcriptText.textContent = data.text;
         transcriptText.className = 'out-text filled';
         boxTranscript.classList.add('has-content');
 
     } else if (data.status === 'translating') {
-        setStep('translate', 'active');
-        translationText.textContent = 'Running MarianMT NMT…';
+        setStep('translate', 'active', 'Neural machine translation EN → ES…');
+        translationText.textContent = 'Translating with MarianMT…';
         translationText.className = 'out-text processing';
 
     } else if (data.status === 'translated') {
-        setStep('translate', 'done', `Translated: "${data.text.slice(0, 40)}${data.text.length > 40 ? '…' : ''}"`);
+        setStep('translate', 'done', `Translated: "${data.text.slice(0, 50)}${data.text.length > 50 ? '…' : ''}"`);
         translationText.textContent = data.text;
         translationText.className = 'out-text filled';
         boxTranslation.classList.add('has-content');
 
     } else if (data.status === 'synthesizing') {
-        setStep('tts', 'active');
+        setStep('tts', 'active', 'Generating speech waveform via HiFiGAN vocoder…');
 
     } else if (data.status === 'audio_ready') {
         setStep('tts', 'done');
-        setStep('play', 'active', 'Streaming audio to speaker…');
+        setStep('play', 'active', 'Streaming synthesised audio to speaker…');
 
+        // ── Play TTS audio with 4× gain boost (SpeechT5 output is quiet) ────────
         const buf = audioContext.createBuffer(1, data.audio.length, 16000);
         buf.getChannelData(0).set(data.audio);
+
         const src = audioContext.createBufferSource();
+        const gain = audioContext.createGain();
+        gain.gain.value = 4.0;   // ← boost output volume x4
         src.buffer = buf;
-        src.connect(audioContext.destination);
+        src.connect(gain);
+        gain.connect(audioContext.destination);
         src.start();
 
         const durSec = data.audio.length / 16000;
         setTimeout(() => {
-            setStep('play', 'done', `Played ${durSec.toFixed(1)}s of audio`);
+            setStep('play', 'done', `Played ${durSec.toFixed(1)}s of Spanish audio`);
             recordBtn.className = 'state-ready';
             recordBtn.disabled = false;
             recordBtn.textContent = '🎙 Hold to Speak';
-        }, durSec * 1000);
+        }, durSec * 1000 + 200);
 
         // ── C: Error ─────────────────────────────────────────────────────────────
     } else if (data.status === 'error') {
-        // mark whichever pipeline step was active as error
         ['stt', 'translate', 'tts', 'play'].forEach(id => {
-            if ($(`ps-${id}`)?.classList.contains('active')) setStep(id, 'error', data.message);
+            if ($(`ps-${id}`)?.classList.contains('active')) {
+                setStep(id, 'error', data.message);
+            }
         });
         showError(data.message);
-        // also show in loading card if still visible
         if (loadingCard.style.display !== 'none') {
             loadEta.textContent = '❌ ' + data.message;
             loadEta.style.color = '#f43f5e';
@@ -274,10 +278,11 @@ worker.addEventListener('message', ({ data }) => {
 async function startRecording() {
     if (isRecording) return;
     isRecording = true;
-    audioSegments = [];
+    recordedChunks = [];
+    capturedDurSec = 0;
     recStart = Date.now();
 
-    // Show pipeline card early, mark step 1 active
+    // Show pipeline card, activate step 1
     pipelineCard.style.display = 'block';
     setStep('capture', 'active', 'Recording from microphone at 16 kHz…');
     setStep('stt', 'idle');
@@ -287,75 +292,124 @@ async function startRecording() {
 
     recordBtn.className = 'state-recording';
     recordBtn.textContent = '🔴 Release to Process';
-
     transcriptText.textContent = 'Listening…';
     transcriptText.className = 'out-text';
     translationText.textContent = 'Awaiting pipeline…';
     translationText.className = 'out-text';
 
     try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                channelCount: 1,
+                sampleRate: 16000,
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+            }
+        });
+
+        // Create AudioContext for visualiser ONLY — do NOT connect to destination
         audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        await audioContext.resume();          // ← critical: un-suspend on mobile
 
         const source = audioContext.createMediaStreamSource(mediaStream);
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 64;
-        processor = audioContext.createScriptProcessor(4096, 1, 1);
-
-        processor.onaudioprocess = e => {
-            audioSegments.push(new Float32Array(e.inputBuffer.getChannelData(0)));
-        };
-
         source.connect(analyser);
-        source.connect(processor);
-        processor.connect(audioContext.destination);
+        // NOT connected to destination → no echo / feedback
 
-        // Show mic meter
+        // Show mic meter + draw level bars
         micMeter.style.display = 'block';
-        drawMicLevel();
+        drawLevel();
 
         // Duration counter
         recTimer = setInterval(() => {
-            const secs = ((Date.now() - recStart) / 1000).toFixed(1);
-            micDur.textContent = secs + 's';
+            micDur.textContent = ((Date.now() - recStart) / 1000).toFixed(1) + 's';
         }, 100);
 
-    } catch (e) {
+        // ── MediaRecorder: reliable cross-browser audio capture ──────────────────
+        const mime = bestMimeType();
+        mediaRecorder = new MediaRecorder(mediaStream, mime ? { mimeType: mime } : {});
+        mediaRecorder.ondataavailable = e => {
+            if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+        };
+        mediaRecorder.start(200);   // chunk every 200ms → works even for very short clips
+
+    } catch (err) {
         isRecording = false;
-        showError('Microphone access denied: ' + e.message);
         setStep('capture', 'error', 'Microphone permission denied');
+        showError('Microphone access denied: ' + err.message);
+        micMeter.style.display = 'none';
         recordBtn.className = 'state-ready';
         recordBtn.textContent = '🎙 Hold to Speak';
-        micMeter.style.display = 'none';
     }
 }
 
-function stopRecording() {
+async function stopRecording() {
     if (!isRecording) return;
     isRecording = false;
+
+    capturedDurSec = (Date.now() - recStart) / 1000;
 
     clearInterval(recTimer);
     cancelAnimationFrame(animFrame);
     micMeter.style.display = 'none';
-    bars.forEach(b => b.style.height = '4px');
-
-    const durSec = ((Date.now() - recStart) / 1000).toFixed(1);
-    setStep('capture', 'done', `Captured ${durSec}s of audio`);
+    bars.forEach(b => { b.style.height = '4px'; });
 
     recordBtn.className = 'state-processing';
     recordBtn.disabled = true;
-    recordBtn.textContent = '⚙ Processing Pipeline…';
+    recordBtn.textContent = '⚙ Decoding Audio…';
 
-    processor?.disconnect();
-    mediaStream?.getTracks().forEach(t => t.stop());
+    if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+        showError('No audio was recorded — try holding the button longer.');
+        return;
+    }
 
-    // Flatten PCM
-    const totalLen = audioSegments.reduce((a, b) => a + b.length, 0);
-    const flat = new Float32Array(totalLen);
-    let offset = 0;
-    for (const seg of audioSegments) { flat.set(seg, offset); offset += seg.length; }
+    // Wait for MediaRecorder to flush all chunks, then decode + resample
+    mediaRecorder.onstop = async () => {
+        try {
+            mediaStream?.getTracks().forEach(t => t.stop());
 
-    worker.postMessage({ type: 'process_audio', audio: flat });
+            if (recordedChunks.length === 0) {
+                throw new Error('No audio chunks received. Hold the button for at least 0.5 seconds.');
+            }
+
+            const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+            const arrayBuffer = await blob.arrayBuffer();
+
+            // Decode compressed audio → AudioBuffer
+            const decoded = await audioContext.decodeAudioData(arrayBuffer);
+            capturedDurSec = decoded.duration;
+
+            recordBtn.textContent = '⚙ Resampling to 16 kHz…';
+
+            // Resample to 16 kHz mono Float32Array (required by Whisper)
+            const targetRate = 16000;
+            const offCtx = new OfflineAudioContext(
+                1,
+                Math.ceil(decoded.duration * targetRate),
+                targetRate
+            );
+            const src = offCtx.createBufferSource();
+            src.buffer = decoded;
+            src.connect(offCtx.destination);
+            src.start(0);
+
+            const resampled = await offCtx.startRendering();
+            const float32 = resampled.getChannelData(0);
+
+            capturedDurSec = float32.length / targetRate;
+
+            recordBtn.textContent = '⚙ Running AI Pipeline…';
+            worker.postMessage({ type: 'process_audio', audio: float32 });
+
+        } catch (err) {
+            showError('Audio decode failed: ' + err.message);
+            setStep('capture', 'error', err.message);
+        }
+    };
+
+    mediaRecorder.stop();
 }
 
 // ─── Input bindings ───────────────────────────────────────────────────────────
