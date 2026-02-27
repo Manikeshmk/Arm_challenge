@@ -107,11 +107,14 @@ onmessage = async (e) => {
             );
         }
 
+        // Inside worker.js 'process_audio' handler
         const translationResult = await translator(text);
         const translatedText = translationResult[0].translation_text;
+
+        // POST TRANSLATION TO UI IMMEDIATELY
         postMessage({ status: 'translated', text: translatedText });
 
-        // ── Stage 3: Text-to-Speech Synthesis ───────────────────────────────────
+        // GENERATE SPEECH FROM DYNAMIC TEXT
         postMessage({ status: 'synthesizing' });
 
         if (!synthesizer) {

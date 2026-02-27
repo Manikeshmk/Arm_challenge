@@ -238,34 +238,30 @@ worker.addEventListener('message', ({ data }) => {
         showError(data.message);
     }
 });
+// Add these variables to your top-level state
+let audioBufferSource = null;
+let scriptProcessor = null;
+let rawAudioData = [];
 
-// ─── Recording Logic ──────────────────────────────────────────────────────────
 async function startRecording() {
     if (isRecording) return;
 
-    // --- CRITICAL FIX: Unlock AudioContexts inside User Gesture ---
+    // Unlock Audio Contexts immediately
     if (!playCtx) playCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (!capCtx) capCtx = new (window.AudioContext || window.webkitAudioContext)();
     await playCtx.resume();
     await capCtx.resume();
 
     isRecording = true;
-    recordedChunks = [];
+    rawAudioData = []; // Clear previous data
     recStart = Date.now();
 
     pipelineCard.style.display = 'block';
-    setStep('capture', 'active', 'Recording…');
-    ['stt', 'translate', 'tts', 'play'].forEach(id => setStep(id, 'idle'));
-
-    recordBtn.className = 'state-recording';
-    recordBtn.textContent = '🔴 Release to Process';
-    transcriptText.textContent = 'Listening…';
-    translationText.textContent = 'Awaiting pipeline…';
+    setStep('capture', 'active', 'Capturing Audio...');
 
     try {
         mediaStream = await navigator.mediaDevices.getUserMedia({
             audio: {
-                channelCount: 1,
                 echoCancellation: false,
                 noiseSuppression: false,
                 autoGainControl: false,
@@ -276,11 +272,18 @@ async function startRecording() {
         analyser = capCtx.createAnalyser();
         analyser.fftSize = 64;
 
-        const silent = capCtx.createGain();
-        silent.gain.value = 0;
+        // Using a ScriptProcessor for maximum compatibility with older Arm browser engines
+        // It captures raw Float32 samples as they arrive
+        scriptProcessor = capCtx.createScriptProcessor(4096, 1, 1);
+        scriptProcessor.onaudioprocess = (e) => {
+            if (!isRecording) return;
+            const inputData = e.inputBuffer.getChannelData(0);
+            rawAudioData.push(new Float32Array(inputData)); // Store raw samples
+        };
+
         source.connect(analyser);
-        source.connect(silent);
-        silent.connect(capCtx.destination);
+        source.connect(scriptProcessor);
+        scriptProcessor.connect(capCtx.destination); // Destination connection is vital
 
         micMeter.style.display = 'block';
         drawLevel();
@@ -289,60 +292,65 @@ async function startRecording() {
             micDur.textContent = ((Date.now() - recStart) / 1000).toFixed(1) + 's';
         }, 100);
 
-        const mime = bestMimeType();
-        mediaRecorder = new MediaRecorder(mediaStream, mime ? { mimeType: mime } : {});
-        mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
-        mediaRecorder.start();
+        recordBtn.className = 'state-recording';
+        recordBtn.textContent = '🔴 RELEASE TO TRANSLATE';
 
     } catch (err) {
         isRecording = false;
-        showError('Mic error: ' + err.message);
+        showError('Mic blocked: ' + err.message);
     }
 }
 
 async function stopRecording() {
     if (!isRecording) return;
     isRecording = false;
-    capturedDurSec = (Date.now() - recStart) / 1000;
 
+    // UI Cleanup
     clearInterval(recTimer);
     cancelAnimationFrame(animFrame);
     micMeter.style.display = 'none';
-
     recordBtn.className = 'state-processing';
-    recordBtn.disabled = true;
-    recordBtn.textContent = '⚙ Processing…';
+    recordBtn.textContent = '⚙ PROCESSING...';
 
+    // Stop hardware
     mediaStream?.getTracks().forEach(t => t.stop());
+    scriptProcessor?.disconnect();
 
-    if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+    if (rawAudioData.length === 0) {
+        showError("No audio detected. Check mic permissions.");
+        return;
+    }
 
-    mediaRecorder.onstop = async () => {
-        try {
-            const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
-            const arrayBuffer = await blob.arrayBuffer();
+    // Flatten raw chunks into a single Float32Array
+    const totalLength = rawAudioData.reduce((acc, curr) => acc + curr.length, 0);
+    const result = new Float32Array(totalLength);
+    let offset = 0;
+    for (const chunk of rawAudioData) {
+        result.set(chunk, offset);
+        offset += chunk.length;
+    }
 
-            const decodeCtx = new (window.AudioContext || window.webkitAudioContext)();
-            const decoded = await decodeCtx.decodeAudioData(arrayBuffer);
-            await decodeCtx.close();
+    // Resample to 16kHz for Whisper
+    const TARGET_RATE = 16000;
+    const originalRate = capCtx.sampleRate;
 
-            const TARGET_RATE = 16000;
-            const offCtx = new OfflineAudioContext(1, Math.ceil(decoded.duration * TARGET_RATE), TARGET_RATE);
-            const offSrc = offCtx.createBufferSource();
-            offSrc.buffer = decoded;
-            offSrc.connect(offCtx.destination);
-            offSrc.start(0);
+    // Manual Resampling (Linear Interpolation) - More reliable than OfflineCtx on some Arm CPUs
+    const resampledData = resampleAudio(result, originalRate, TARGET_RATE);
 
-            const resampled = await offCtx.startRendering();
-            worker.postMessage({ type: 'process_audio', audio: resampled.getChannelData(0) });
-
-        } catch (err) {
-            showError('Audio processing failed: ' + err.message);
-        }
-    };
-    mediaRecorder.stop();
+    console.log(`[AI] Sending ${resampledData.length} samples to Worker`);
+    worker.postMessage({ type: 'process_audio', audio: resampledData });
 }
 
+// Helper: Fast Linear Resampler
+function resampleAudio(buffer, fromRate, toRate) {
+    const ratio = fromRate / toRate;
+    const newLength = Math.round(buffer.length / ratio);
+    const result = new Float32Array(newLength);
+    for (let i = 0; i < newLength; i++) {
+        result[i] = buffer[Math.round(i * ratio)];
+    }
+    return result;
+}
 // ─── Bindings ─────────────────────────────────────────────────────────────────
 recordBtn.addEventListener('mousedown', startRecording);
 recordBtn.addEventListener('mouseup', stopRecording);
